@@ -55,7 +55,8 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
         Period period; // The current period of the dispute.
         bool ruled; // True if the Ruling event has been emitted.
         bool executed; // True if the ruling has been executed.
-        uint256 lastPeriodChange; // The last time the period was changed.
+        uint256 lastPeriodChange; // The last time the period was changed, *wall time* regardless of arbitration pause.
+        uint256 lastPeriodChangeArbitration; // The last time the period was changed, *arbitration time* with any arbitration pause deducted.
         Round[] rounds; // Rounds of the dispute.
         uint256[10] __gap; // Reserved slots for future upgrades.
     }
@@ -108,7 +109,10 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
     mapping(IERC20 => bool) public acceptedFeeTokens; // True if the token is accepted.
     bool public paused; // Whether asset withdrawals are paused.
     bool public arbitrationPaused; // Whether arbitration period transitions are paused.
-    uint256 public arbitrationPauseGracePeriodEnd; // Timestamp after which period transitions can resume.
+    uint256 public arbitrationPauseGracePeriodEnd; // The wall time grace end. Used by the public `appealPeriod()` API.
+    uint256 public arbitrationPauseGracePeriodEndArbitration; // The arbitration time grace end. Used for onchain enforcement (`passPeriod`, dispute kits).
+    uint256 public arbitrationPauseStartedAtWall; // The wall time when arbitration pause started.
+    uint256 public arbitrationPausedDuration; // The cumulative paused duration in seconds (wall time), used to compute arbitration time.
     address public wNative; // The wrapped native token for safeSend().
     mapping(address => bool) public arbitrableWhitelist; // Arbitrable whitelist.
     bool public arbitrableWhitelistEnabled; // Whether the arbitrable whitelist is enabled.
@@ -402,6 +406,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
     function pauseArbitration() external onlyByGuardianOrOwner {
         if (arbitrationPaused) revert WhenArbitrationNotPausedOnly();
         arbitrationPaused = true;
+        arbitrationPauseStartedAtWall = block.timestamp;
         emit ArbitrationPaused();
     }
 
@@ -409,8 +414,14 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
     /// @param _gracePeriod Duration in seconds before period transitions can resume.
     function unpauseArbitration(uint256 _gracePeriod) external onlyByOwner {
         if (!arbitrationPaused) revert WhenArbitrationPausedOnly();
+        arbitrationPausedDuration += block.timestamp - arbitrationPauseStartedAtWall;
+        arbitrationPauseStartedAtWall = 0;
         arbitrationPaused = false;
+
+        // Wall time grace end (kept for API/backwards compatibility).
         arbitrationPauseGracePeriodEnd = block.timestamp + _gracePeriod;
+        // Arbitration time grace end (used for onchain enforcement).
+        arbitrationPauseGracePeriodEndArbitration = arbitrationTime() + _gracePeriod;
         emit ArbitrationUnpaused(arbitrationPauseGracePeriodEnd);
     }
 
@@ -693,6 +704,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
         dispute.courtID = courtID;
         dispute.arbitrated = IArbitrableV2(msg.sender);
         dispute.lastPeriodChange = block.timestamp;
+        dispute.lastPeriodChangeArbitration = arbitrationTime();
 
         IDisputeKit disputeKit = disputeKits[disputeKitID];
         Court storage court = courts[courtID];
@@ -720,15 +732,16 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
     /// @notice Passes the period of a specified dispute.
     /// @param _disputeID The ID of the dispute.
     function passPeriod(uint256 _disputeID) external {
-        if (arbitrationPaused || block.timestamp <= arbitrationPauseGracePeriodEnd)
+        if (arbitrationPaused || arbitrationTime() <= arbitrationPauseGracePeriodEndArbitration)
             revert WhenArbitrationNotPausedOnly();
         Dispute storage dispute = disputes[_disputeID];
         uint256 currentRound = dispute.rounds.length - 1;
         Round storage round = dispute.rounds[currentRound];
+        uint256 arbitrationNow = arbitrationTime();
         if (dispute.period == Period.evidence) {
             if (
                 currentRound == 0 &&
-                block.timestamp - dispute.lastPeriodChange < round.timesPerPeriod[uint256(dispute.period)]
+                arbitrationNow - dispute.lastPeriodChangeArbitration < round.timesPerPeriod[uint256(dispute.period)]
             ) {
                 revert EvidenceNotPassedAndNotAppeal();
             }
@@ -736,7 +749,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
             dispute.period = round.hiddenVotes ? Period.commit : Period.vote;
         } else if (dispute.period == Period.commit) {
             if (
-                block.timestamp - dispute.lastPeriodChange < round.timesPerPeriod[uint256(dispute.period)] &&
+                arbitrationNow - dispute.lastPeriodChangeArbitration < round.timesPerPeriod[uint256(dispute.period)] &&
                 !disputeKits[round.disputeKitID].areCommitsAllCast(_disputeID)
             ) {
                 revert CommitPeriodNotPassed();
@@ -744,7 +757,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
             dispute.period = Period.vote;
         } else if (dispute.period == Period.vote) {
             if (
-                block.timestamp - dispute.lastPeriodChange < round.timesPerPeriod[uint256(dispute.period)] &&
+                arbitrationNow - dispute.lastPeriodChangeArbitration < round.timesPerPeriod[uint256(dispute.period)] &&
                 !disputeKits[round.disputeKitID].areVotesAllCast(_disputeID)
             ) {
                 revert VotePeriodNotPassed();
@@ -753,7 +766,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
             emit AppealPossible(_disputeID, dispute.arbitrated);
         } else if (dispute.period == Period.appeal) {
             if (
-                block.timestamp - dispute.lastPeriodChange < round.timesPerPeriod[uint256(dispute.period)] &&
+                arbitrationNow - dispute.lastPeriodChangeArbitration < round.timesPerPeriod[uint256(dispute.period)] &&
                 !disputeKits[round.disputeKitID].isAppealFunded(_disputeID)
             ) {
                 revert AppealPeriodNotPassed();
@@ -764,6 +777,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
         }
 
         dispute.lastPeriodChange = block.timestamp;
+        dispute.lastPeriodChangeArbitration = arbitrationTime();
         emit NewPeriod(_disputeID, dispute.period);
     }
 
@@ -834,6 +848,7 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
         dispute.courtID = newCourtID;
         dispute.period = Period.evidence;
         dispute.lastPeriodChange = block.timestamp;
+        dispute.lastPeriodChangeArbitration = arbitrationTime();
 
         Court storage court = courts[newCourtID];
         extraRound.nbVotes = msg.value / court.feeForJuror; // As many votes that can be afforded by the provided funds.
@@ -1163,6 +1178,36 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
             start = 0;
             end = 0;
         }
+    }
+
+    /// @notice Gets the start and the end of a specified dispute's current appeal period in arbitration time.
+    /// @dev Arbitration time does not advance while `arbitrationPaused == true`. This function is intended
+    ///      for onchain enforcement (dispute kits, period passing logic) to avoid consuming appeal time
+    ///      while arbitration is paused.
+    /// @param _disputeID The ID of the dispute.
+    /// @return start The start of the appeal period in arbitration time.
+    /// @return end The end of the appeal period in arbitration time.
+    function appealPeriodEffective(uint256 _disputeID) external view returns (uint256 start, uint256 end) {
+        Dispute storage dispute = disputes[_disputeID];
+        Round storage round = dispute.rounds[dispute.rounds.length - 1];
+        if (dispute.period == Period.appeal) {
+            start = dispute.lastPeriodChangeArbitration;
+            end = dispute.lastPeriodChangeArbitration + round.timesPerPeriod[uint256(Period.appeal)];
+            if (end < arbitrationPauseGracePeriodEndArbitration) {
+                end = arbitrationPauseGracePeriodEndArbitration;
+            }
+        } else {
+            start = 0;
+            end = 0;
+        }
+    }
+
+    /// @notice Returns the current arbitration time (unix seconds).
+    /// @dev Arbitration time is a derived clock which does not advance while `arbitrationPaused == true`.
+    ///      This is used for onchain enforcement so that time spent paused does not consume dispute periods.
+    function arbitrationTime() public view returns (uint256) {
+        uint256 pausedNow = arbitrationPaused ? (block.timestamp - arbitrationPauseStartedAtWall) : 0;
+        return block.timestamp - arbitrationPausedDuration - pausedNow;
     }
 
     /// @inheritdoc IArbitratorV2

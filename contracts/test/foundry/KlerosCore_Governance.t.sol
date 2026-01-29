@@ -291,44 +291,45 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
     function test_loserAppealCutoffExtendedByHalfGrace() public {
         uint256 disputeID = _createDisputeAndAdvanceToAppeal();
 
-        (uint256 start, uint256 baseEnd) = core.appealPeriod(disputeID);
-        uint256 baseLoserCutoff = _loserCutoff(start, baseEnd);
+        // Loser cutoff enforcement is based on arbitration time, not wall time.
+        (uint256 startArb, uint256 baseEndArb) = core.appealPeriodEffective(disputeID);
+        uint256 baseLoserCutoffArb = _loserCutoff(startArb, baseEndArb);
 
         // Use an even grace value so grace/2 is exact. We choose a grace period which makes graceEnd == baseEnd + grace.
         uint256 grace = 1000;
-        uint256 gracePeriod = (baseEnd - start) + grace;
+        // Note: `unpauseArbitration()` takes a duration, not an absolute timestamp.
+        // We pass (base appeal duration + grace), so the appeal end extension on both clocks is deterministic.
+        uint256 gracePeriod = (baseEndArb - startArb) + grace;
         // NOTE: After pausing, `graceEnd` depends on the timestamp at which arbitration is unpaused.
         // We only rely on the delta in `appealPeriodEnd`, not on `baseEnd + grace`.
 
         vm.prank(guardian);
         core.pauseArbitration();
-        // Simulate some time passing while arbitration is paused, but keep it small enough
-        // that we're still able to fund in the (extended) loser window after unpausing.
+        // Simulate some time passing while arbitration is paused.
         vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(gracePeriod);
 
-        (, uint256 newEnd) = core.appealPeriod(disputeID);
+        (uint256 startArbAfter, uint256 newEndArb) = core.appealPeriodEffective(disputeID);
+        assertEq(startArbAfter, startArb, "Appeal start (arbitration time) should not change");
 
-        // After pausing, grace end is computed from the timestamp at which we unpause.
-        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
-        assertEq(newEnd, graceEnd, "Appeal end should extend to grace end");
-
-        uint256 newLoserCutoff = _loserCutoff(start, newEnd);
+        uint256 newLoserCutoffArb = _loserCutoff(startArb, newEndArb);
         assertEq(
-            newLoserCutoff,
-            baseLoserCutoff + (newEnd - baseEnd) / 2,
+            newLoserCutoffArb,
+            baseLoserCutoffArb + (newEndArb - baseEndArb) / 2,
             "Loser cutoff should extend by half the appeal-end extension"
         );
 
         (uint256 ruling, , ) = core.currentRuling(disputeID);
         uint256 loserChoice = ruling == 1 ? 2 : 1;
 
-        // Warp strictly after the original loser cutoff, but before the extended one.
-        // This timestamp is inside the "added window" created by the grace extension.
-        vm.warp(_ts() + 1);
-        assertGt(_ts(), baseLoserCutoff, "Should be after original loser cutoff");
-        assertLt(_ts(), newLoserCutoff, "Should be within extended loser window");
+        // Warp (in wall time) so that arbitration time is strictly after the original loser cutoff,
+        // but still before the extended one. This is the "added window" created by the grace extension.
+        uint256 arbitrationNow = core.arbitrationTime();
+        if (arbitrationNow <= baseLoserCutoffArb) vm.warp(_ts() + (baseLoserCutoffArb - arbitrationNow) + 1);
+
+        assertGt(core.arbitrationTime(), baseLoserCutoffArb, "Should be after original loser cutoff (arb time)");
+        assertLt(core.arbitrationTime(), newLoserCutoffArb, "Should be within extended loser window (arb time)");
 
         vm.prank(crowdfunder1);
         disputeKit.fundAppeal{value: 1}(disputeID, loserChoice);
@@ -337,11 +338,12 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
     function test_loserBlockedAfterExtendedCutoffButBeforeGraceEnd() public {
         uint256 disputeID = _createDisputeAndAdvanceToAppeal();
 
-        (uint256 start, uint256 baseEnd) = core.appealPeriod(disputeID);
-        uint256 baseLoserCutoff = _loserCutoff(start, baseEnd);
+        // Loser cutoff enforcement is based on arbitration time, not wall time.
+        (uint256 startArb, uint256 baseEndArb) = core.appealPeriodEffective(disputeID);
+        uint256 baseLoserCutoffArb = _loserCutoff(startArb, baseEndArb);
 
         uint256 grace = 1000;
-        uint256 gracePeriod = (baseEnd - start) + grace;
+        uint256 gracePeriod = (baseEndArb - startArb) + grace;
 
         vm.prank(guardian);
         core.pauseArbitration();
@@ -349,23 +351,26 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         vm.prank(owner);
         core.unpauseArbitration(gracePeriod);
 
-        (, uint256 newEnd) = core.appealPeriod(disputeID);
+        (uint256 startArbAfter, uint256 newEndArb) = core.appealPeriodEffective(disputeID);
+        assertEq(startArbAfter, startArb, "Appeal start (arbitration time) should not change");
 
-        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
-        assertEq(newEnd, graceEnd, "Appeal end should extend to grace end");
-
-        uint256 newLoserCutoff = _loserCutoff(start, newEnd);
+        uint256 newLoserCutoffArb = _loserCutoff(startArb, newEndArb);
         assertEq(
-            newLoserCutoff,
-            baseLoserCutoff + (newEnd - baseEnd) / 2,
+            newLoserCutoffArb,
+            baseLoserCutoffArb + (newEndArb - baseEndArb) / 2,
             "Loser cutoff should extend by half the appeal-end extension"
         );
 
         (uint256 ruling, , ) = core.currentRuling(disputeID);
         uint256 loserChoice = ruling == 1 ? 2 : 1;
 
-        vm.warp(newLoserCutoff + 1);
-        assertLt(_ts(), graceEnd, "Warp should stay within grace-extended appeal period");
+        // Warp (in wall time) to just after the *extended* loser cutoff in arbitration time,
+        // but still strictly within the (grace-extended) appeal period in arbitration time.
+        uint256 arbitrationNow = core.arbitrationTime();
+        if (arbitrationNow <= newLoserCutoffArb) vm.warp(_ts() + (newLoserCutoffArb - arbitrationNow) + 1);
+
+        assertGt(core.arbitrationTime(), newLoserCutoffArb, "Should be after extended loser cutoff (arb time)");
+        assertLt(core.arbitrationTime(), newEndArb, "Warp should stay within grace-extended appeal period (arb time)");
 
         vm.prank(crowdfunder1);
         vm.expectRevert(DisputeKitClassicBase.NotAppealPeriodForLoser.selector);

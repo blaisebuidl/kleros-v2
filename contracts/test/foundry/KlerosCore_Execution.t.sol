@@ -831,7 +831,7 @@ contract KlerosCore_ExecutionTest is KlerosCore_TestBase {
         emit KlerosCore.NewPeriod(disputeID, KlerosCore.Period.execution);
         core.passPeriod(disputeID); // Execution
 
-        (, , KlerosCore.Period period, , , uint256 lastPeriodChange) = core.disputes(disputeID);
+        (, , KlerosCore.Period period, , , uint256 lastPeriodChange, ) = core.disputes(disputeID);
         assertEq(uint256(period), uint256(KlerosCore.Period.execution), "Wrong period");
         assertEq(lastPeriodChange, block.timestamp, "Wrong lastPeriodChange");
 
@@ -844,7 +844,7 @@ contract KlerosCore_ExecutionTest is KlerosCore_TestBase {
         emit IArbitrableV2.Ruling(core, disputeID, 2);
         core.executeRuling(disputeID);
 
-        (, , , bool ruled, bool executed, ) = core.disputes(disputeID);
+        (, , , bool ruled, bool executed, , ) = core.disputes(disputeID);
         assertEq(ruled, true, "Should be ruled");
         assertEq(executed, true, "Should be executed");
     }
@@ -886,7 +886,7 @@ contract KlerosCore_ExecutionTest is KlerosCore_TestBase {
         core.passPeriod(disputeID); // Execution
 
         core.executeRuling(disputeID); // Arbitrable reverts
-        (, , , bool ruled, bool executed, ) = core.disputes(disputeID);
+        (, , , bool ruled, bool executed, , ) = core.disputes(disputeID);
         assertEq(ruled, true, "Should be ruled");
         assertEq(executed, false, "Should not be executed");
 
@@ -895,7 +895,7 @@ contract KlerosCore_ExecutionTest is KlerosCore_TestBase {
         maliciousArbitrable.changeBehaviour(false);
 
         core.executeRuling(disputeID);
-        (, , , ruled, executed, ) = core.disputes(disputeID);
+        (, , , ruled, executed, , ) = core.disputes(disputeID);
         assertEq(ruled, true, "Should be ruled");
         assertEq(executed, true, "Should be executed");
     }

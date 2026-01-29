@@ -274,7 +274,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         Round storage round = dispute.rounds[localRoundID];
 
         ISortitionModule sortitionModule = core.sortitionModule();
-        (uint96 courtID, , , , , ) = core.disputes(_coreDisputeID);
+        (uint96 courtID, , , , , , ) = core.disputes(_coreDisputeID);
         (drawnAddress, fromSubcourtID) = sortitionModule.draw(courtID, _coreDisputeID, _nonce);
         if (drawnAddress == address(0)) {
             // Sortition can return 0 address if no one has staked yet.
@@ -307,7 +307,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         uint256[] calldata _voteIDs,
         bytes32 _commit
     ) internal whenArbitrationNotPaused isActive(_coreDisputeID) {
-        (, , KlerosCore.Period period, , , ) = core.disputes(_coreDisputeID);
+        (, , KlerosCore.Period period, , , , ) = core.disputes(_coreDisputeID);
         if (period != KlerosCore.Period.commit) revert NotCommitPeriod();
         if (_voteIDs.length == 0) revert EmptyVoteIDs();
         if (_commit == bytes32(0)) revert EmptyCommit();
@@ -354,7 +354,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         string memory _justification,
         address _juror
     ) internal whenArbitrationNotPaused isActive(_coreDisputeID) {
-        (, , KlerosCore.Period period, , , ) = core.disputes(_coreDisputeID);
+        (, , KlerosCore.Period period, , , , ) = core.disputes(_coreDisputeID);
         if (period != KlerosCore.Period.vote) revert NotVotePeriod();
         if (_voteIDs.length == 0) revert EmptyVoteIDs();
 
@@ -410,8 +410,9 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         Dispute storage dispute = disputes[coreDisputeIDToLocal[_coreDisputeID]];
         if (_choice > dispute.numberOfChoices) revert ChoiceOutOfBounds();
 
-        (uint256 appealPeriodStart, uint256 appealPeriodEnd) = core.appealPeriod(_coreDisputeID);
-        if (block.timestamp < appealPeriodStart || block.timestamp >= appealPeriodEnd) revert NotAppealPeriod();
+        uint256 arbitrationNow = core.arbitrationTime();
+        (uint256 appealPeriodStart, uint256 appealPeriodEnd) = core.appealPeriodEffective(_coreDisputeID);
+        if (arbitrationNow < appealPeriodStart || arbitrationNow >= appealPeriodEnd) revert NotAppealPeriod();
 
         uint256 multiplier;
         (uint256 ruling, , ) = this.currentRuling(_coreDisputeID);
@@ -419,7 +420,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
             multiplier = WINNER_STAKE_MULTIPLIER;
         } else {
             if (
-                block.timestamp - appealPeriodStart >=
+                arbitrationNow - appealPeriodStart >=
                 ((appealPeriodEnd - appealPeriodStart) * LOSER_APPEAL_PERIOD_MULTIPLIER) / ONE_BASIS_POINT
             ) {
                 revert NotAppealPeriodForLoser();
@@ -463,8 +464,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
             } else {
                 // Don't subtract 1 from length since both round arrays haven't been updated yet.
                 dispute.coreRoundIDToLocal[coreRoundID + 1] = dispute.rounds.length;
-
-                Round storage newRound = dispute.rounds.push();
+                dispute.rounds.push();
             }
             core.appeal{value: appealCost}(_coreDisputeID, dispute.numberOfChoices, dispute.extraData);
         }
@@ -484,7 +484,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         address payable _beneficiary,
         uint256 _choice
     ) external returns (uint256 amount) {
-        (, , KlerosCore.Period period, , , ) = core.disputes(_coreDisputeID);
+        (, , KlerosCore.Period period, , , , ) = core.disputes(_coreDisputeID);
         if (period != KlerosCore.Period.execution) revert DisputeNotResolved();
         if (core.paused()) revert CoreIsPaused();
         if (!coreDisputeIDToActive[_coreDisputeID].dispute) revert DisputeUnknownInThisDisputeKit();
@@ -555,7 +555,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         Round storage round = dispute.rounds[dispute.rounds.length - 1];
         tied = round.winningChoices.length != 1;
         ruling = tied ? 0 : round.winningChoices[0];
-        (, , KlerosCore.Period period, , , ) = core.disputes(_coreDisputeID);
+        (, , KlerosCore.Period period, , , , ) = core.disputes(_coreDisputeID);
         // Override the final ruling if only one side funded the appeals.
         if (period == KlerosCore.Period.execution) {
             uint256[] memory fundedChoices = getFundedChoices(_coreDisputeID);
@@ -651,7 +651,7 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
         Dispute storage dispute = disputes[coreDisputeIDToLocal[_coreDisputeID]];
         Round storage round = dispute.rounds[dispute.rounds.length - 1];
 
-        (uint96 courtID, , , , , ) = core.disputes(_coreDisputeID);
+        (uint96 courtID, , , , , , ) = core.disputes(_coreDisputeID);
         (, bool hiddenVotes, , , , ) = core.courts(courtID);
         uint256 expectedTotalVoted = hiddenVotes ? round.totalCommitted : round.votes.length;
 
@@ -660,12 +660,13 @@ abstract contract DisputeKitClassicBase is IDisputeKit, Initializable, UUPSProxi
 
     /// @inheritdoc IDisputeKit
     function isAppealFunded(uint256 _coreDisputeID) external view override returns (bool) {
-        (uint256 appealPeriodStart, uint256 appealPeriodEnd) = core.appealPeriod(_coreDisputeID);
+        // Uses arbitration time so time spent paused does not consume the loser window.
+        uint256 arbitrationNow = core.arbitrationTime();
+        (uint256 appealPeriodStart, uint256 appealPeriodEnd) = core.appealPeriodEffective(_coreDisputeID);
 
         uint256[] memory fundedChoices = getFundedChoices(_coreDisputeID);
-        // Uses block.timestamp from the current tx when called by the core contract.
         return (fundedChoices.length == 0 &&
-            block.timestamp - appealPeriodStart >=
+            arbitrationNow - appealPeriodStart >=
             ((appealPeriodEnd - appealPeriodStart) * LOSER_APPEAL_PERIOD_MULTIPLIER) / ONE_BASIS_POINT);
     }
 

@@ -69,7 +69,8 @@ contract KlerosCore_DisputesTest is KlerosCore_TestBase {
             KlerosCore.Period period,
             bool ruled,
             bool executed,
-            uint256 lastPeriodChange
+            uint256 lastPeriodChange,
+
         ) = core.disputes(disputeID);
 
         assertEq(courtID, newCourtID, "Wrong court ID");
