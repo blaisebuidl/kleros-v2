@@ -15,6 +15,12 @@ import {RatesConverter} from "../../src/arbitration/RatesConverter.sol";
 /// @title KlerosCore_GovernanceTest
 /// @dev Tests for KlerosCore governance functions (owner/guardian operations)
 contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
+    /// @dev Use this instead of `block.timestamp` when `vm.warp` is used in the same call context.
+    /// See forge-std `Vm.getBlockTimestamp()` docs and https://github.com/foundry-rs/foundry/issues/6180 and https://github.com/sablier-labs/evm-utils/issues/62
+    function _ts() internal view returns (uint256) {
+        return vm.getBlockTimestamp();
+    }
+
     function test_pause() public {
         vm.expectRevert(KlerosCore.GuardianOrOwnerOnly.selector);
         vm.prank(other);
@@ -79,7 +85,7 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         vm.prank(owner);
         core.pauseArbitration();
 
-        uint256 expectedGraceEnd = block.timestamp + grace;
+        uint256 expectedGraceEnd = _ts() + grace;
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
         emit KlerosCore.ArbitrationUnpaused(expectedGraceEnd);
@@ -98,6 +104,7 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
 
         vm.prank(guardian);
         core.pauseArbitration();
+        vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(grace);
 
@@ -160,6 +167,7 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
 
         vm.prank(guardian);
         core.pauseArbitration();
+        vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(grace);
 
@@ -186,14 +194,14 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         vm.prank(disputer);
         arbitrable.createDispute{value: feeForJuror * DEFAULT_NB_OF_JURORS}("Action");
 
-        vm.warp(block.timestamp + minStakingTime);
+        vm.warp(_ts() + minStakingTime);
         sortitionModule.passPhase(); // Generating
-        vm.warp(block.timestamp + rngLookahead);
+        vm.warp(_ts() + rngLookahead);
         sortitionModule.passPhase(); // Drawing
 
         core.draw(disputeID, DEFAULT_NB_OF_JURORS);
 
-        vm.warp(block.timestamp + timesPerPeriod[0]);
+        vm.warp(_ts() + timesPerPeriod[0]);
         core.passPeriod(disputeID); // Vote
 
         KlerosCore.Round memory round = core.getRoundInfo(disputeID, 0);
@@ -239,16 +247,22 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         (, uint256 baseEnd) = core.appealPeriod(disputeID);
 
         uint256 grace = 3600;
-        uint256 expectedGraceEnd = block.timestamp + grace;
+        uint256 expectedGraceEnd = _ts() + grace;
         assertGt(expectedGraceEnd, baseEnd, "Grace end should exceed base end");
 
         vm.prank(guardian);
         core.pauseArbitration();
+        vm.warp(_ts() + 10 * grace);
+
+        uint256 unpauseTimestamp = _ts();
         vm.prank(owner);
         core.unpauseArbitration(grace);
 
         (, uint256 end) = core.appealPeriod(disputeID);
-        assertEq(end, expectedGraceEnd, "Appeal end should extend to grace end");
+        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
+
+        assertEq(graceEnd, unpauseTimestamp + grace, "Grace end should be unpause timestamp + grace");
+        assertEq(end, graceEnd, "Appeal end should extend to grace end");
     }
 
     function test_fundAppealAfterBaseEndDuringGrace() public {
@@ -256,16 +270,18 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         (, uint256 baseEnd) = core.appealPeriod(disputeID);
 
         uint256 grace = 3600;
-        uint256 graceEnd = block.timestamp + grace;
-        assertGt(graceEnd, baseEnd, "Grace end should exceed base end");
+        uint256 expectedGraceEnd = _ts() + grace;
+        assertGt(expectedGraceEnd, baseEnd, "Grace end should exceed base end");
 
         vm.prank(guardian);
         core.pauseArbitration();
+        vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(grace);
 
-        vm.warp(baseEnd + 1);
-        assertLt(block.timestamp, graceEnd, "Warp should stay within grace");
+        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
+        assertGt(_ts(), baseEnd, "Should be after base end (within grace)");
+        assertLt(_ts(), graceEnd, "Should stay within grace");
 
         (uint256 ruling, , ) = core.currentRuling(disputeID);
         vm.prank(crowdfunder1);
@@ -281,29 +297,38 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
         // Use an even grace value so grace/2 is exact. We choose a grace period which makes graceEnd == baseEnd + grace.
         uint256 grace = 1000;
         uint256 gracePeriod = (baseEnd - start) + grace;
-        uint256 expectedGraceEnd = block.timestamp + gracePeriod;
-        assertEq(expectedGraceEnd, baseEnd + grace, "Test setup: grace end should be baseEnd + grace");
+        // NOTE: After pausing, `graceEnd` depends on the timestamp at which arbitration is unpaused.
+        // We only rely on the delta in `appealPeriodEnd`, not on `baseEnd + grace`.
 
         vm.prank(guardian);
         core.pauseArbitration();
+        // Simulate some time passing while arbitration is paused, but keep it small enough
+        // that we're still able to fund in the (extended) loser window after unpausing.
+        vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(gracePeriod);
 
         (, uint256 newEnd) = core.appealPeriod(disputeID);
-        assertEq(newEnd, expectedGraceEnd, "Appeal end should extend to grace end");
+
+        // After pausing, grace end is computed from the timestamp at which we unpause.
+        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
+        assertEq(newEnd, graceEnd, "Appeal end should extend to grace end");
 
         uint256 newLoserCutoff = _loserCutoff(start, newEnd);
-        assertEq(newLoserCutoff, baseLoserCutoff + grace / 2, "Loser cutoff should extend by grace/2");
+        assertEq(
+            newLoserCutoff,
+            baseLoserCutoff + (newEnd - baseEnd) / 2,
+            "Loser cutoff should extend by half the appeal-end extension"
+        );
 
         (uint256 ruling, , ) = core.currentRuling(disputeID);
         uint256 loserChoice = ruling == 1 ? 2 : 1;
 
         // Warp strictly after the original loser cutoff, but before the extended one.
         // This timestamp is inside the "added window" created by the grace extension.
-        uint256 timestampInAddedWindow = baseLoserCutoff + grace / 4;
-        vm.warp(timestampInAddedWindow);
-        assertGt(block.timestamp, baseLoserCutoff, "Warp should be after original loser cutoff");
-        assertLt(block.timestamp, newLoserCutoff, "Warp should stay within extended loser window");
+        vm.warp(_ts() + 1);
+        assertGt(_ts(), baseLoserCutoff, "Should be after original loser cutoff");
+        assertLt(_ts(), newLoserCutoff, "Should be within extended loser window");
 
         vm.prank(crowdfunder1);
         disputeKit.fundAppeal{value: 1}(disputeID, loserChoice);
@@ -317,24 +342,30 @@ contract KlerosCore_GovernanceTest is KlerosCore_TestBase {
 
         uint256 grace = 1000;
         uint256 gracePeriod = (baseEnd - start) + grace;
-        uint256 expectedGraceEnd = block.timestamp + gracePeriod;
 
         vm.prank(guardian);
         core.pauseArbitration();
+        vm.warp(_ts() + 10 * grace);
         vm.prank(owner);
         core.unpauseArbitration(gracePeriod);
 
         (, uint256 newEnd) = core.appealPeriod(disputeID);
-        assertEq(newEnd, expectedGraceEnd, "Appeal end should extend to grace end");
+
+        uint256 graceEnd = core.arbitrationPauseGracePeriodEnd();
+        assertEq(newEnd, graceEnd, "Appeal end should extend to grace end");
 
         uint256 newLoserCutoff = _loserCutoff(start, newEnd);
-        assertEq(newLoserCutoff, baseLoserCutoff + grace / 2, "Loser cutoff should extend by grace/2");
+        assertEq(
+            newLoserCutoff,
+            baseLoserCutoff + (newEnd - baseEnd) / 2,
+            "Loser cutoff should extend by half the appeal-end extension"
+        );
 
         (uint256 ruling, , ) = core.currentRuling(disputeID);
         uint256 loserChoice = ruling == 1 ? 2 : 1;
 
         vm.warp(newLoserCutoff + 1);
-        assertLt(block.timestamp, expectedGraceEnd, "Warp should stay within grace-extended appeal period");
+        assertLt(_ts(), graceEnd, "Warp should stay within grace-extended appeal period");
 
         vm.prank(crowdfunder1);
         vm.expectRevert(DisputeKitClassicBase.NotAppealPeriodForLoser.selector);
