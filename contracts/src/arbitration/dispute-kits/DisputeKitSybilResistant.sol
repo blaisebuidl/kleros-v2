@@ -67,6 +67,7 @@ contract DisputeKitSybilResistant is DisputeKitClassicBase, ICourtEligibility {
     // ************************************* //
     // *           Public Views            * //
     // ************************************* //
+
     /// @inheritdoc ICourtEligibility
     function isEligible(address _juror, uint96 /* _courtID */) external view override returns (bool) {
         return poh.isHuman(_juror);

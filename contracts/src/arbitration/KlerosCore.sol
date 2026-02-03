@@ -649,10 +649,6 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
     /// Note that the existing delayed stake will be nullified as non-relevant.
     function setStake(uint96 _courtID, uint256 _newStake) external whenNotPaused {
         if (address(jurorNft) != address(0) && jurorNft.balanceOf(msg.sender) == 0) revert NotEligibleForStaking();
-        if (
-            courts[_courtID].eligibility != ICourtEligibility(address(0)) &&
-            !courts[_courtID].eligibility.isEligible(msg.sender, _courtID)
-        ) revert NotEligibleForStaking();
         _setStake(msg.sender, _courtID, _newStake, false, OnError.Revert);
     }
 
@@ -1416,7 +1412,8 @@ contract KlerosCore is IArbitratorV2, Initializable, UUPSProxiable {
             _account,
             _courtID,
             _newStake,
-            _noDelay
+            _noDelay,
+            courts[_courtID].eligibility
         );
         if (stakingResult != StakingResult.Successful && stakingResult != StakingResult.Delayed) {
             _stakingFailed(_onError, stakingResult);
