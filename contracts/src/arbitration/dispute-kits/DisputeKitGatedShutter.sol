@@ -4,7 +4,10 @@ pragma solidity ^0.8.24;
 
 import {DisputeKitClassicBase} from "./DisputeKitClassicBase.sol";
 import {KlerosCore} from "../KlerosCore.sol";
+import {ICourtEligibility} from "../interfaces/ICourtEligibility.sol";
 import {GENERAL_COURT} from "../../libraries/Constants.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+
 interface IBalanceHolder {
     /// @notice Returns the number of tokens in `owner` account.
     /// @dev Compatible with ERC-20 and ERC-721.
@@ -28,7 +31,9 @@ interface IBalanceHolderERC1155 {
 /// - a vote aggregation system: plurality,
 /// - an incentive system: equal split between coherent votes,
 /// - an appeal system: fund 2 choices only, vote on any choice.
-contract DisputeKitGatedShutter is DisputeKitClassicBase {
+contract DisputeKitGatedShutter is DisputeKitClassicBase, ICourtEligibility {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     string public constant override version = "2.0.0";
 
     address private constant NO_TOKEN_GATE = address(0);
@@ -37,7 +42,7 @@ contract DisputeKitGatedShutter is DisputeKitClassicBase {
     // *             Storage               * //
     // ************************************* //
 
-    mapping(uint96 courtID => mapping(address token => bool supported)) public supportedTokens; // Whether the token is supported or not in a court
+    mapping(uint96 => EnumerableSet.AddressSet) private supportedTokens; // Whether the token is supported or not in a court
     mapping(uint256 localDisputeID => mapping(uint256 localRoundID => mapping(uint256 voteID => bytes32 justificationCommitment)))
         public justificationCommitments;
 
@@ -88,7 +93,7 @@ contract DisputeKitGatedShutter is DisputeKitClassicBase {
     /// @param _wNative The wrapped native token address, typically wETH.
     function initialize(address _owner, KlerosCore _core, address _wNative) external initializer {
         __DisputeKitClassicBase_initialize(_owner, _core, _wNative);
-        supportedTokens[GENERAL_COURT][NO_TOKEN_GATE] = true; // Allow disputes without token gating in the General Court
+        supportedTokens[GENERAL_COURT].add(NO_TOKEN_GATE); // Allow disputes without token gating in the General Court
     }
 
     // ************************ //
@@ -107,7 +112,11 @@ contract DisputeKitGatedShutter is DisputeKitClassicBase {
     /// @param _supported Whether the tokens are supported or not.
     function changeSupportedTokens(uint96 _courtID, address[] memory _tokens, bool _supported) external onlyByOwner {
         for (uint256 i = 0; i < _tokens.length; i++) {
-            supportedTokens[_courtID][_tokens[i]] = _supported;
+            if (_supported) {
+                supportedTokens[_courtID].add(_tokens[i]);
+            } else {
+                supportedTokens[_courtID].remove(_tokens[i]);
+            }
             emit SupportedTokensChanged(_courtID, _tokens[i], _supported);
         }
     }
@@ -125,7 +134,7 @@ contract DisputeKitGatedShutter is DisputeKitClassicBase {
         uint256 _nbVotes
     ) public override {
         (uint96 courtID, address tokenGate, , ) = _extraDataToTokenInfo(_extraData);
-        if (!supportedTokens[courtID][tokenGate]) revert TokenNotSupported(courtID, tokenGate);
+        if (!supportedTokens[courtID].contains(tokenGate)) revert TokenNotSupported(courtID, tokenGate);
 
         // super.createDispute() ensures access control onlyByCore.
         super.createDispute(_coreDisputeID, _coreRoundID, _numberOfChoices, _extraData, _nbVotes);
@@ -206,6 +215,30 @@ contract DisputeKitGatedShutter is DisputeKitClassicBase {
     /// @return bytes32 The hash of the encoded justification
     function hashJustification(uint256 _salt, string memory _justification) public pure returns (bytes32) {
         return keccak256(abi.encode(_salt, keccak256(bytes(_justification))));
+    }
+
+    /// @inheritdoc ICourtEligibility
+    function isEligible(address _juror, uint96 _courtID) external view override returns (bool) {
+        for (uint256 i = 0; i < supportedTokens[_courtID].length(); i++) {
+            address token = supportedTokens[_courtID].at(i);
+            if (token == NO_TOKEN_GATE) continue; // Skip it, the balance check below would revert.
+
+            // if (isERC1155) {
+            //     // TODO: Not supported yet
+            //     return IBalanceHolderERC1155(tokens[i]).balanceOf(_juror, tokenId) > 0;
+            // } else {
+            if (IBalanceHolder(token).balanceOf(_juror) > 0) return true;
+            // }
+        }
+        return false;
+    }
+
+    /// @notice Checks if a token is supported in a court.
+    /// @param _courtID The ID of the court.
+    /// @param _token The address of the token.
+    /// @return Whether the token is supported or not.
+    function isTokenSupported(uint96 _courtID, address _token) external view returns (bool) {
+        return supportedTokens[_courtID].contains(_token);
     }
 
     // ************************************* //

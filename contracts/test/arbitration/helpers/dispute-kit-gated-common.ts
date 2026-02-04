@@ -105,7 +105,7 @@ export const expectTokenSupported = async (
   courtId: BigNumberish = Courts.GENERAL
 ) => {
   const tokenAddress = typeof token === "string" ? token : token.toString();
-  expect(await context.disputeKit.supportedTokens(courtId, tokenAddress)).to.equal(supported);
+  expect(await context.disputeKit.isTokenSupported(courtId, tokenAddress)).to.equal(supported);
 };
 
 // Helper function to stake and draw jurors
