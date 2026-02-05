@@ -66,7 +66,7 @@ const ToolName = styled.span`
 const tools = [
   { name: "Dispute Templates Preview", route: "/dispute-template" },
   { name: "Configure Ruler", route: "/ruler" },
-  { name: "Courts Manager (coming soon)", route: "/" },
+  { name: "Court Manager", route: "/court-manager" },
   { name: "Arbitrable Explorer (coming soon)", route: "/" },
 ];
 
