@@ -1,7 +1,28 @@
 "use client";
-import React, { createContext, useContext, useState, useMemo, useCallback, type ReactNode } from "react";
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
-import { type Address, formatEther } from "viem";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useMemo,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from "react";
+import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
+import { type Address, formatEther, encodeFunctionData, type Hex } from "viem";
+
+import {
+  KLEROS_CORE_ADDRESS,
+  POLICY_REGISTRY_ADDRESS,
+  klerosCoreCourtsAbi,
+  policyRegistryAbi,
+  ownerAbi,
+  createSafeTransaction,
+  createSafeTransactionBatch,
+  type SafeTransaction,
+  type CourtData,
+  type TimesPerPeriod,
+} from "./contracts";
 
 // --- Types ---
 
@@ -66,7 +87,7 @@ export function validateCourtParams(
       errors.push({
         courtId: court.id,
         field: "minStake",
-        message: `minStake (${formatEther(params.minStake)} ETH) must be ≥ parent court's minStake (${formatEther(parent.params.minStake)} ETH)`,
+        message: `minStake (${formatEther(params.minStake)} PNK) must be ≥ parent court's minStake (${formatEther(parent.params.minStake)} PNK)`,
         severity: "error",
       });
     }
@@ -79,7 +100,7 @@ export function validateCourtParams(
       errors.push({
         courtId: court.id,
         field: "minStake",
-        message: `minStake (${formatEther(params.minStake)} ETH) must be ≤ child court "${childId}" minStake (${formatEther(child.params.minStake)} ETH)`,
+        message: `minStake (${formatEther(params.minStake)} PNK) must be ≤ child court #${childId} minStake (${formatEther(child.params.minStake)} PNK)`,
         severity: "error",
       });
     }
@@ -132,55 +153,218 @@ export function validateCourtParams(
 // --- Context ---
 
 interface CourtManagerContextType {
+  // Data
   courts: Map<number, CourtNode>;
   selectedCourtId: number | null;
   selectCourt: (id: number) => void;
+  
+  // Loading states
   isLoading: boolean;
+  error: string | null;
+  
+  // Owner info
   isOwner: boolean;
   ownerAddress: Address | undefined;
+  isOwnerMultisig: boolean;
+  
+  // Editing
   pendingChanges: PendingChange[];
   addPendingChange: (change: PendingChange) => void;
   clearPendingChanges: () => void;
+  
+  // Validation
   validationErrors: ValidationError[];
+  
+  // Actions
+  buildChangeCourtTx: (courtId: number, params: Partial<CourtParams & CourtTimePeriods>) => SafeTransaction | null;
+  exportSafeBatch: (transactions: SafeTransaction[], name: string) => void;
+  
+  // Contract info
+  klerosCorAddress: Address;
+  policyRegistryAddress: Address;
 }
 
-const CourtManagerContext = createContext<CourtManagerContextType>({
-  courts: new Map(),
-  selectedCourtId: null,
-  selectCourt: () => {},
-  isLoading: true,
-  isOwner: false,
-  ownerAddress: undefined,
-  pendingChanges: [],
-  addPendingChange: () => {},
-  clearPendingChanges: () => {},
-  validationErrors: [],
-});
+const CourtManagerContext = createContext<CourtManagerContextType | null>(null);
 
-export const useCourtManager = () => useContext(CourtManagerContext);
+export const useCourtManager = () => {
+  const ctx = useContext(CourtManagerContext);
+  if (!ctx) throw new Error("useCourtManager must be used within CourtManagerProvider");
+  return ctx;
+};
 
 // --- Provider ---
+
+// Number of courts to fetch (hardcoded for now, could be dynamic)
+const MAX_COURTS = 30;
 
 interface CourtManagerProviderProps {
   children: ReactNode;
 }
 
 export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ children }) => {
-  const { address } = useAccount();
-  const [selectedCourtId, setSelectedCourtId] = useState<number | null>(1); // Default to General Court
+  const { address, chainId } = useAccount();
+  const publicClient = usePublicClient();
+  const [selectedCourtId, setSelectedCourtId] = useState<number | null>(1);
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
+  const [isOwnerMultisig, setIsOwnerMultisig] = useState(false);
 
-  // TODO: Replace with actual wagmi contract reads once hooks are generated
-  // For now, this is the structure. The actual implementation will use:
-  // - useReadContract for KlerosCore.owner()
-  // - useReadContract for KlerosCore.courts(id) for each court
-  // - useReadContract for KlerosCore.getTimesPerPeriod(id)
-  // - useReadContract for PolicyRegistry.policies(id)
+  // --- Contract Reads ---
 
-  const courts = useMemo(() => new Map<number, CourtNode>(), []);
-  const isLoading = false;
-  const isOwner = false;
-  const ownerAddress = undefined as Address | undefined;
+  // Get KlerosCore owner
+  const { data: klerosOwner } = useReadContract({
+    address: KLEROS_CORE_ADDRESS as Address,
+    abi: ownerAbi,
+    functionName: "owner",
+  });
+
+  // Get PolicyRegistry owner
+  const { data: policyOwner } = useReadContract({
+    address: POLICY_REGISTRY_ADDRESS as Address,
+    abi: ownerAbi,
+    functionName: "owner",
+  });
+
+  // Batch read all courts (0 to MAX_COURTS)
+  const courtReads = useMemo(
+    () =>
+      Array.from({ length: MAX_COURTS }, (_, i) => ({
+        address: KLEROS_CORE_ADDRESS as Address,
+        abi: klerosCoreCourtsAbi,
+        functionName: "courts" as const,
+        args: [BigInt(i)],
+      })),
+    []
+  );
+
+  const { data: courtsData, isLoading: courtsLoading, error: courtsError } = useReadContracts({
+    contracts: courtReads,
+  });
+
+  // Batch read time periods for all courts
+  const timeReads = useMemo(
+    () =>
+      Array.from({ length: MAX_COURTS }, (_, i) => ({
+        address: KLEROS_CORE_ADDRESS as Address,
+        abi: klerosCoreCourtsAbi,
+        functionName: "getTimesPerPeriod" as const,
+        args: [i],
+      })),
+    []
+  );
+
+  const { data: timesData, isLoading: timesLoading } = useReadContracts({
+    contracts: timeReads,
+  });
+
+  // Batch read policies for all courts
+  const policyReads = useMemo(
+    () =>
+      Array.from({ length: MAX_COURTS }, (_, i) => ({
+        address: POLICY_REGISTRY_ADDRESS as Address,
+        abi: policyRegistryAbi,
+        functionName: "policies" as const,
+        args: [BigInt(i)],
+      })),
+    []
+  );
+
+  const { data: policiesData, isLoading: policiesLoading } = useReadContracts({
+    contracts: policyReads,
+  });
+
+  // Check if owner is a multisig (contract)
+  useEffect(() => {
+    const checkOwnerType = async () => {
+      if (!publicClient || !klerosOwner) return;
+      try {
+        const code = await publicClient.getCode({ address: klerosOwner as Address });
+        setIsOwnerMultisig(code !== undefined && code !== "0x" && code.length > 2);
+      } catch {
+        setIsOwnerMultisig(false);
+      }
+    };
+    checkOwnerType();
+  }, [publicClient, klerosOwner]);
+
+  // --- Build Courts Map ---
+
+  const courts = useMemo(() => {
+    const map = new Map<number, CourtNode>();
+    if (!courtsData) return map;
+
+    // First pass: create all court nodes
+    for (let i = 0; i < courtsData.length; i++) {
+      const result = courtsData[i];
+      if (result.status !== "success" || !result.result) continue;
+
+      const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint, boolean];
+      const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled] = data;
+
+      // Skip courts that don't exist (parent = 0 for uninitialized)
+      if (i !== 0 && parent === 0n) continue;
+
+      const timeResult = timesData?.[i];
+      const times =
+        timeResult?.status === "success" && timeResult.result
+          ? (timeResult.result as unknown as [bigint, bigint, bigint, bigint])
+          : [0n, 0n, 0n, 0n];
+
+      const policyResult = policiesData?.[i];
+      const policyUri =
+        policyResult?.status === "success" && policyResult.result
+          ? (policyResult.result as string)
+          : "";
+
+      map.set(i, {
+        id: i,
+        params: {
+          parent: Number(parent),
+          hiddenVotes,
+          minStake,
+          alpha,
+          feeForJuror,
+          jurorsForCourtJump,
+          disabled,
+        },
+        timePeriods: {
+          evidence: times[0],
+          commit: times[1],
+          vote: times[2],
+          appeal: times[3],
+        },
+        policy: policyUri ? { name: `Court #${i}`, uri: policyUri } : undefined,
+        children: [],
+      });
+    }
+
+    // Second pass: populate children arrays
+    for (const [id, court] of map) {
+      if (id !== court.params.parent) {
+        const parent = map.get(court.params.parent);
+        if (parent) {
+          parent.children.push(id);
+        }
+      }
+    }
+
+    return map;
+  }, [courtsData, timesData, policiesData]);
+
+  // --- Computed values ---
+
+  const isLoading = courtsLoading || timesLoading || policiesLoading;
+  const error = courtsError ? courtsError.message : null;
+  const isOwner = !!address && !!klerosOwner && address.toLowerCase() === klerosOwner.toLowerCase();
+
+  const validationErrors = useMemo(() => {
+    const errors: ValidationError[] = [];
+    for (const [, court] of courts) {
+      errors.push(...validateCourtParams(court, courts));
+    }
+    return errors;
+  }, [courts]);
+
+  // --- Actions ---
 
   const selectCourt = useCallback((id: number) => {
     setSelectedCourtId(id);
@@ -202,13 +386,65 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
     setPendingChanges([]);
   }, []);
 
-  const validationErrors = useMemo(() => {
-    const errors: ValidationError[] = [];
-    for (const [, court] of courts) {
-      errors.push(...validateCourtParams(court, courts));
-    }
-    return errors;
-  }, [courts]);
+  const buildChangeCourtTx = useCallback(
+    (courtId: number, params: Partial<CourtParams & CourtTimePeriods>): SafeTransaction | null => {
+      const court = courts.get(courtId);
+      if (!court) return null;
+
+      const data = encodeFunctionData({
+        abi: klerosCoreCourtsAbi,
+        functionName: "changeCourtParameters",
+        args: [
+          courtId,
+          params.hiddenVotes ?? court.params.hiddenVotes,
+          params.minStake ?? court.params.minStake,
+          params.alpha ?? court.params.alpha,
+          params.feeForJuror ?? court.params.feeForJuror,
+          params.jurorsForCourtJump ?? court.params.jurorsForCourtJump,
+          [
+            params.evidence ?? court.timePeriods.evidence,
+            params.commit ?? court.timePeriods.commit,
+            params.vote ?? court.timePeriods.vote,
+            params.appeal ?? court.timePeriods.appeal,
+          ],
+        ],
+      });
+
+      return createSafeTransaction({
+        to: KLEROS_CORE_ADDRESS,
+        data,
+      });
+    },
+    [courts]
+  );
+
+  const exportSafeBatch = useCallback(
+    (transactions: SafeTransaction[], name: string) => {
+      if (!chainId || !klerosOwner || !address) return;
+
+      const batch = createSafeTransactionBatch({
+        name,
+        chainId,
+        safeAddress: klerosOwner,
+        creatorAddress: address,
+        transactions,
+      });
+
+      // Download as JSON file
+      const blob = new Blob([JSON.stringify(batch, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name.replace(/\s+/g, "-").toLowerCase()}-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [chainId, klerosOwner, address]
+  );
+
+  // --- Context Value ---
 
   const value = useMemo(
     () => ({
@@ -216,14 +452,35 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       selectedCourtId,
       selectCourt,
       isLoading,
+      error,
       isOwner,
-      ownerAddress,
+      ownerAddress: klerosOwner as Address | undefined,
+      isOwnerMultisig,
       pendingChanges,
       addPendingChange,
       clearPendingChanges,
       validationErrors,
+      buildChangeCourtTx,
+      exportSafeBatch,
+      klerosCorAddress: KLEROS_CORE_ADDRESS as Address,
+      policyRegistryAddress: POLICY_REGISTRY_ADDRESS as Address,
     }),
-    [courts, selectedCourtId, selectCourt, isLoading, isOwner, ownerAddress, pendingChanges, addPendingChange, clearPendingChanges, validationErrors]
+    [
+      courts,
+      selectedCourtId,
+      selectCourt,
+      isLoading,
+      error,
+      isOwner,
+      klerosOwner,
+      isOwnerMultisig,
+      pendingChanges,
+      addPendingChange,
+      clearPendingChanges,
+      validationErrors,
+      buildChangeCourtTx,
+      exportSafeBatch,
+    ]
   );
 
   return <CourtManagerContext.Provider value={value}>{children}</CourtManagerContext.Provider>;
