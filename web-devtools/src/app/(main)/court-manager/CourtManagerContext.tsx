@@ -17,6 +17,7 @@ import {
   klerosCoreCourtsAbi,
   policyRegistryAbi,
   ownerAbi,
+  governorAbi,
   createSafeTransaction,
   createSafeTransactionBatch,
   type SafeTransaction,
@@ -210,19 +211,36 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
 
   // --- Contract Reads ---
 
-  // Get KlerosCore owner
-  const { data: klerosOwner } = useReadContract({
+  // Get KlerosCore owner (try "owner" first, fall back to "governor" for beta)
+  const { data: klerosOwnerNew } = useReadContract({
     address: KLEROS_CORE_ADDRESS as Address,
     abi: ownerAbi,
     functionName: "owner",
   });
 
-  // Get PolicyRegistry owner
-  const { data: policyOwner } = useReadContract({
+  const { data: klerosOwnerLegacy } = useReadContract({
+    address: KLEROS_CORE_ADDRESS as Address,
+    abi: governorAbi,
+    functionName: "governor",
+  });
+
+  // Use whichever one returns a valid address
+  const klerosOwner = klerosOwnerNew || klerosOwnerLegacy;
+
+  // Get PolicyRegistry owner (same pattern)
+  const { data: policyOwnerNew } = useReadContract({
     address: POLICY_REGISTRY_ADDRESS as Address,
     abi: ownerAbi,
     functionName: "owner",
   });
+
+  const { data: policyOwnerLegacy } = useReadContract({
+    address: POLICY_REGISTRY_ADDRESS as Address,
+    abi: governorAbi,
+    functionName: "governor",
+  });
+
+  const policyOwner = policyOwnerNew || policyOwnerLegacy;
 
   // Batch read all courts (0 to MAX_COURTS)
   const courtReads = useMemo(

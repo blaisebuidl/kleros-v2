@@ -20,11 +20,22 @@ export const POLICY_REGISTRY_ADDRESS = isProductionDeployment()
 
 // --- ABIs ---
 
-// Common owner function ABI (used by both contracts)
+// Owner/Governor ABI (beta uses "governor", new code uses "owner")
+// Try owner() first, fall back to governor() for beta deployments
 export const ownerAbi = [
   {
     inputs: [],
     name: "owner",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+export const governorAbi = [
+  {
+    inputs: [],
+    name: "governor",
     outputs: [{ internalType: "address", name: "", type: "address" }],
     stateMutability: "view",
     type: "function",
