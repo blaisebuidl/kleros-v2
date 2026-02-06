@@ -63,6 +63,9 @@ export const governorAbi = [
 ] as const;
 
 // KlerosCore ABI for court management
+// Note: KlerosCoreUniversity (devnet) has 6 outputs (no "disabled" field)
+//       KlerosCore (mainnet/testnet) has 7 outputs (includes "disabled")
+// We use the 6-output version and handle "disabled" separately for compatibility
 export const klerosCoreCourtsAbi = [
   {
     inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
@@ -74,7 +77,6 @@ export const klerosCoreCourtsAbi = [
       { internalType: "uint256", name: "alpha", type: "uint256" },
       { internalType: "uint256", name: "feeForJuror", type: "uint256" },
       { internalType: "uint256", name: "jurorsForCourtJump", type: "uint256" },
-      { internalType: "bool", name: "disabled", type: "bool" },
     ],
     stateMutability: "view",
     type: "function",

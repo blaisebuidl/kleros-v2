@@ -355,9 +355,10 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       console.log(`[CourtManager] Court ${i}:`, { status: result.status, result: result.result });
       if (result.status !== "success" || !result.result) continue;
 
-      const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint, boolean];
+      // KlerosCoreUniversity returns 6 fields (no disabled), KlerosCore returns 7
+      const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint, boolean?];
       console.log(`[CourtManager] Court ${i} parsed data:`, data);
-      const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled] = data;
+      const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled = false] = data;
 
       // Skip courts that don't exist (parent = 0 for uninitialized)
       if (i !== 0 && parent === 0n) {
