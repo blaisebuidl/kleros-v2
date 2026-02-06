@@ -1,4 +1,16 @@
-export const isProductionDeployment = () => process.env.NEXT_PUBLIC_DEPLOYMENT === "mainnet";
+export type Deployment = "mainnet" | "testnet" | "devnet";
+
+export const getDeployment = (): Deployment => {
+  const deployment = process.env.NEXT_PUBLIC_DEPLOYMENT;
+  if (deployment === "mainnet" || deployment === "testnet" || deployment === "devnet") {
+    return deployment;
+  }
+  return "devnet"; // default
+};
+
+export const isProductionDeployment = () => getDeployment() === "mainnet";
+export const isTestnetDeployment = () => getDeployment() === "testnet";
+export const isDevnetDeployment = () => getDeployment() === "devnet";
 
 export const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://cdn.kleros.link";
 

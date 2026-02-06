@@ -12,8 +12,9 @@ import { useAccount, useReadContract, useReadContracts, usePublicClient } from "
 import { type Address, formatEther, encodeFunctionData, type Hex } from "viem";
 
 import {
-  KLEROS_CORE_ADDRESS,
-  POLICY_REGISTRY_ADDRESS,
+  getKlerosCoreAddress,
+  getPolicyRegistryAddress,
+  getChainId,
   klerosCoreCourtsAbi,
   policyRegistryAbi,
   ownerAbi,
@@ -24,6 +25,7 @@ import {
   type CourtData,
   type TimesPerPeriod,
 } from "./contracts";
+import { getDeployment, type Deployment } from "consts/index";
 
 // --- Types ---
 
@@ -163,6 +165,11 @@ interface CourtManagerContextType {
   isLoading: boolean;
   error: string | null;
   
+  // Chain/deployment info
+  deployment: Deployment;
+  expectedChainId: number;
+  isCorrectChain: boolean;
+  
   // Owner info
   isOwner: boolean;
   ownerAddress: Address | undefined;
@@ -203,23 +210,32 @@ interface CourtManagerProviderProps {
 }
 
 export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ children }) => {
-  const { address, chainId } = useAccount();
+  const { address, chainId: walletChainId } = useAccount();
   const publicClient = usePublicClient();
   const [selectedCourtId, setSelectedCourtId] = useState<number | null>(1);
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>([]);
   const [isOwnerMultisig, setIsOwnerMultisig] = useState(false);
 
+  // --- Deployment-specific addresses ---
+  const klerosCorAddress = useMemo(() => getKlerosCoreAddress(), []);
+  const policyRegistryAddress = useMemo(() => getPolicyRegistryAddress(), []);
+  const expectedChainId = useMemo(() => getChainId(), []);
+  const deployment = useMemo(() => getDeployment(), []);
+
+  // Check if wallet is on the correct chain for this deployment
+  const isCorrectChain = walletChainId === expectedChainId;
+
   // --- Contract Reads ---
 
   // Get KlerosCore owner (try "owner" first, fall back to "governor" for beta)
   const { data: klerosOwnerNew } = useReadContract({
-    address: KLEROS_CORE_ADDRESS as Address,
+    address: klerosCorAddress,
     abi: ownerAbi,
     functionName: "owner",
   });
 
   const { data: klerosOwnerLegacy } = useReadContract({
-    address: KLEROS_CORE_ADDRESS as Address,
+    address: klerosCorAddress,
     abi: governorAbi,
     functionName: "governor",
   });
@@ -229,13 +245,13 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
 
   // Get PolicyRegistry owner (same pattern)
   const { data: policyOwnerNew } = useReadContract({
-    address: POLICY_REGISTRY_ADDRESS as Address,
+    address: policyRegistryAddress,
     abi: ownerAbi,
     functionName: "owner",
   });
 
   const { data: policyOwnerLegacy } = useReadContract({
-    address: POLICY_REGISTRY_ADDRESS as Address,
+    address: policyRegistryAddress,
     abi: governorAbi,
     functionName: "governor",
   });
@@ -246,12 +262,12 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
   const courtReads = useMemo(
     () =>
       Array.from({ length: MAX_COURTS }, (_, i) => ({
-        address: KLEROS_CORE_ADDRESS as Address,
+        address: klerosCorAddress,
         abi: klerosCoreCourtsAbi,
         functionName: "courts" as const,
         args: [BigInt(i)],
       })),
-    []
+    [klerosCorAddress]
   );
 
   const { data: courtsData, isLoading: courtsLoading, error: courtsError } = useReadContracts({
@@ -262,12 +278,12 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
   const timeReads = useMemo(
     () =>
       Array.from({ length: MAX_COURTS }, (_, i) => ({
-        address: KLEROS_CORE_ADDRESS as Address,
+        address: klerosCorAddress,
         abi: klerosCoreCourtsAbi,
         functionName: "getTimesPerPeriod" as const,
         args: [i],
       })),
-    []
+    [klerosCorAddress]
   );
 
   const { data: timesData, isLoading: timesLoading } = useReadContracts({
@@ -278,12 +294,12 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
   const policyReads = useMemo(
     () =>
       Array.from({ length: MAX_COURTS }, (_, i) => ({
-        address: POLICY_REGISTRY_ADDRESS as Address,
+        address: policyRegistryAddress,
         abi: policyRegistryAbi,
         functionName: "policies" as const,
         args: [BigInt(i)],
       })),
-    []
+    [policyRegistryAddress]
   );
 
   const { data: policiesData, isLoading: policiesLoading } = useReadContracts({
@@ -429,20 +445,20 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       });
 
       return createSafeTransaction({
-        to: KLEROS_CORE_ADDRESS,
+        to: klerosCorAddress,
         data,
       });
     },
-    [courts]
+    [courts, klerosCorAddress]
   );
 
   const exportSafeBatch = useCallback(
     (transactions: SafeTransaction[], name: string) => {
-      if (!chainId || !klerosOwner || !address) return;
+      if (!expectedChainId || !klerosOwner || !address) return;
 
       const batch = createSafeTransactionBatch({
         name,
-        chainId,
+        chainId: expectedChainId,
         safeAddress: klerosOwner,
         creatorAddress: address,
         transactions,
@@ -459,29 +475,47 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     },
-    [chainId, klerosOwner, address]
+    [expectedChainId, klerosOwner, address]
   );
 
   // --- Context Value ---
 
   const value = useMemo(
     () => ({
+      // Data
       courts,
       selectedCourtId,
       selectCourt,
+      
+      // Loading/error states
       isLoading,
       error,
+      
+      // Chain/deployment info
+      deployment,
+      expectedChainId,
+      isCorrectChain,
+      
+      // Owner info
       isOwner,
       ownerAddress: klerosOwner as Address | undefined,
       isOwnerMultisig,
+      
+      // Editing
       pendingChanges,
       addPendingChange,
       clearPendingChanges,
+      
+      // Validation
       validationErrors,
+      
+      // Actions
       buildChangeCourtTx,
       exportSafeBatch,
-      klerosCorAddress: KLEROS_CORE_ADDRESS as Address,
-      policyRegistryAddress: POLICY_REGISTRY_ADDRESS as Address,
+      
+      // Contract addresses (for display/debugging)
+      klerosCorAddress,
+      policyRegistryAddress,
     }),
     [
       courts,
@@ -489,6 +523,9 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       selectCourt,
       isLoading,
       error,
+      deployment,
+      expectedChainId,
+      isCorrectChain,
       isOwner,
       klerosOwner,
       isOwnerMultisig,
@@ -498,6 +535,8 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       validationErrors,
       buildChangeCourtTx,
       exportSafeBatch,
+      klerosCorAddress,
+      policyRegistryAddress,
     ]
   );
 

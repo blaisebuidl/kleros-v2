@@ -6,17 +6,37 @@
  */
 
 import { arbitrum, arbitrumSepolia } from "viem/chains";
-import { isProductionDeployment } from "consts/index";
+import { getDeployment, type Deployment } from "consts/index";
 
-// --- Addresses ---
+// --- Addresses by Deployment ---
 
-export const KLEROS_CORE_ADDRESS = isProductionDeployment()
-  ? "0x991d2df165670b9cac3B022f4B68D65b664222ea" // Arbitrum Mainnet
-  : "0x33d0b8879368acD8ca868e656Ade97bB97b90468" as const; // Arbitrum Sepolia
+const KLEROS_CORE_ADDRESSES: Record<Deployment, `0x${string}`> = {
+  mainnet: "0x991d2df165670b9cac3B022f4B68D65b664222ea",   // Arbitrum One
+  testnet: "0xE8442307d36e9bf6aB27F1A009F95CE8E11C3479",   // Arbitrum Sepolia
+  devnet: "0x9EfCaeF787d0b53d7a24fdeAB067A4BAFCDb892F",    // Arbitrum Sepolia Devnet
+};
 
-export const POLICY_REGISTRY_ADDRESS = isProductionDeployment()
-  ? "0x553dcbF6aB3aE06a1064b5200Df1B5A9fB403d3c" // Arbitrum Mainnet
-  : "0x88954e4cC5B4f2A2E6EA1e77C92eA381eEDF5d0E" as const; // Arbitrum Sepolia
+const POLICY_REGISTRY_ADDRESSES: Record<Deployment, `0x${string}`> = {
+  mainnet: "0x553dcbF6aB3aE06a1064b5200Df1B5A9fB403d3c",   // Arbitrum One
+  testnet: "0x2668c46A14af8997417138B064ca1bEB70769585",   // Arbitrum Sepolia
+  devnet: "0x6445F57d2Bd2AD5BC23bC899731f7D5184d6e893",    // Arbitrum Sepolia Devnet
+};
+
+// Chain IDs by deployment
+export const CHAIN_ID_BY_DEPLOYMENT: Record<Deployment, number> = {
+  mainnet: arbitrum.id,        // 42161
+  testnet: arbitrumSepolia.id, // 421614
+  devnet: arbitrumSepolia.id,  // 421614 (same chain, different deployment)
+};
+
+// Get addresses for current deployment
+export const getKlerosCoreAddress = (): `0x${string}` => KLEROS_CORE_ADDRESSES[getDeployment()];
+export const getPolicyRegistryAddress = (): `0x${string}` => POLICY_REGISTRY_ADDRESSES[getDeployment()];
+export const getChainId = (): number => CHAIN_ID_BY_DEPLOYMENT[getDeployment()];
+
+// Legacy exports for backward compatibility
+export const KLEROS_CORE_ADDRESS = getKlerosCoreAddress();
+export const POLICY_REGISTRY_ADDRESS = getPolicyRegistryAddress();
 
 // --- ABIs ---
 
