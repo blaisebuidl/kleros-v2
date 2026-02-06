@@ -13,7 +13,7 @@ import { getDeployment, type Deployment } from "consts/index";
 const KLEROS_CORE_ADDRESSES: Record<Deployment, `0x${string}`> = {
   mainnet: "0x991d2df165670b9cac3B022f4B68D65b664222ea",   // Arbitrum One
   testnet: "0xE8442307d36e9bf6aB27F1A009F95CE8E11C3479",   // Arbitrum Sepolia
-  devnet: "0x9EfCaeF787d0b53d7a24fdeAB067A4BAFCDb892F",    // Arbitrum Sepolia Devnet
+  devnet: "0x53451933006f5CbcCdb33fcDd6AC9A00b641C474",    // Arbitrum Sepolia Devnet (KlerosCoreUniversity)
 };
 
 const POLICY_REGISTRY_ADDRESSES: Record<Deployment, `0x${string}`> = {
