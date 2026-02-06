@@ -222,6 +222,18 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
   const expectedChainId = useMemo(() => getChainId(), []);
   const deployment = useMemo(() => getDeployment(), []);
 
+  // Debug logging
+  useEffect(() => {
+    console.log("[CourtManager] Config:", {
+      deployment,
+      klerosCorAddress,
+      policyRegistryAddress,
+      expectedChainId,
+      walletChainId,
+      envDeployment: process.env.NEXT_PUBLIC_DEPLOYMENT,
+    });
+  }, [deployment, klerosCorAddress, policyRegistryAddress, expectedChainId, walletChainId]);
+
   // Check if wallet is on the correct chain for this deployment
   const isCorrectChain = walletChainId === expectedChainId;
 
@@ -321,6 +333,15 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
   }, [publicClient, klerosOwner]);
 
   // --- Build Courts Map ---
+
+  // Debug logging for courts data
+  useEffect(() => {
+    console.log("[CourtManager] Courts data:", {
+      courtsData: courtsData?.slice(0, 5), // First 5 courts
+      courtsLoading,
+      courtsError,
+    });
+  }, [courtsData, courtsLoading, courtsError]);
 
   const courts = useMemo(() => {
     const map = new Map<number, CourtNode>();
