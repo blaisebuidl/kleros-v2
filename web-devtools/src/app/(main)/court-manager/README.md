@@ -10,11 +10,13 @@ Admin tool for managing Kleros court hierarchy, parameters, and policies.
 - [x] View time periods (evidence, commit, vote, appeal)
 - [x] View court policies (from PolicyRegistry)
 - [x] Client-side validation (minStake invariants, alpha bounds, etc.)
+- [x] EOA vs Multisig detection
 - [ ] Edit court parameters (changeCourtParameters)
 - [ ] Edit court policy (PolicyRegistry.setPolicy)
 - [ ] Create new courts (createCourt)
-- [ ] EOA vs Multisig detection
-- [ ] Safe Transaction Builder JSON export (for multisig owners)
+- [ ] **IPFS upload** for policies (via Atlas API)
+- [ ] **Safe Transaction Service API** submission (not just JSON export)
+- [ ] **KIP template export** for non-owners (governance proposal markdown)
 
 ### Phase 2
 - [ ] **Tenderly simulation integration** — simulate tx batch before submission
@@ -30,6 +32,24 @@ Admin tool for managing Kleros court hierarchy, parameters, and policies.
 - [ ] Dispute Kit management per court
 - [ ] Historical parameter changes (from events)
 - [ ] Gas estimation
+
+## Networks
+
+| Network | Chain | Deployment |
+|---------|-------|------------|
+| Mainnet | Arbitrum One (42161) | Production beta |
+| Testnet | Arbitrum Sepolia (421614) | arbitrumSepolia |
+| Devnet | Arbitrum Sepolia (421614) | arbitrumSepoliaDevnet |
+
+## User Roles
+
+| User | Can View | Can Edit | Submit Method |
+|------|----------|----------|---------------|
+| Owner (EOA) | ✅ | ✅ | Direct on-chain tx |
+| Owner (Multisig) | ✅ | ✅ | Safe Transaction Service API |
+| Non-owner | ✅ (read-only) | ❌ | Copy KIP template to clipboard |
+
+**KIP = Kleros Improvement Proposal** — markdown governance template for proposing parameter/policy/court changes through governance.
 
 ## Architecture
 
