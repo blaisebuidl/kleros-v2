@@ -347,16 +347,23 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
     const map = new Map<number, CourtNode>();
     if (!courtsData) return map;
 
+    console.log("[CourtManager] Parsing courts, raw data:", courtsData);
+
     // First pass: create all court nodes
     for (let i = 0; i < courtsData.length; i++) {
       const result = courtsData[i];
+      console.log(`[CourtManager] Court ${i}:`, { status: result.status, result: result.result });
       if (result.status !== "success" || !result.result) continue;
 
       const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint, boolean];
+      console.log(`[CourtManager] Court ${i} parsed data:`, data);
       const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled] = data;
 
       // Skip courts that don't exist (parent = 0 for uninitialized)
-      if (i !== 0 && parent === 0n) continue;
+      if (i !== 0 && parent === 0n) {
+        console.log(`[CourtManager] Skipping court ${i} - parent is 0`);
+        continue;
+      }
 
       const timeResult = timesData?.[i];
       const times =
@@ -402,6 +409,7 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       }
     }
 
+    console.log("[CourtManager] Final courts map size:", map.size, "courts:", Array.from(map.keys()));
     return map;
   }, [courtsData, timesData, policiesData]);
 
