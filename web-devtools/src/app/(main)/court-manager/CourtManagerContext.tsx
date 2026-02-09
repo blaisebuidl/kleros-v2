@@ -1,13 +1,5 @@
 "use client";
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useMemo,
-  useCallback,
-  useEffect,
-  type ReactNode,
-} from "react";
+import React, { createContext, useContext, useState, useMemo, useCallback, useEffect, type ReactNode } from "react";
 import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
 import { type Address, formatEther, encodeFunctionData, type Hex } from "viem";
 
@@ -160,33 +152,33 @@ interface CourtManagerContextType {
   courts: Map<number, CourtNode>;
   selectedCourtId: number | null;
   selectCourt: (id: number) => void;
-  
+
   // Loading states
   isLoading: boolean;
   error: string | null;
-  
+
   // Chain/deployment info
   deployment: Deployment;
   expectedChainId: number;
   isCorrectChain: boolean;
-  
+
   // Owner info
   isOwner: boolean;
   ownerAddress: Address | undefined;
   isOwnerMultisig: boolean;
-  
+
   // Editing
   pendingChanges: PendingChange[];
   addPendingChange: (change: PendingChange) => void;
   clearPendingChanges: () => void;
-  
+
   // Validation
   validationErrors: ValidationError[];
-  
+
   // Actions
   buildChangeCourtTx: (courtId: number, params: Partial<CourtParams & CourtTimePeriods>) => SafeTransaction | null;
   exportSafeBatch: (transactions: SafeTransaction[], name: string) => void;
-  
+
   // Contract info
   klerosCorAddress: Address;
   policyRegistryAddress: Address;
@@ -282,7 +274,11 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
     [klerosCorAddress]
   );
 
-  const { data: courtsData, isLoading: courtsLoading, error: courtsError } = useReadContracts({
+  const {
+    data: courtsData,
+    isLoading: courtsLoading,
+    error: courtsError,
+  } = useReadContracts({
     contracts: courtReads,
   });
 
@@ -293,7 +289,7 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
         address: klerosCorAddress,
         abi: klerosCoreCourtsAbi,
         functionName: "getTimesPerPeriod" as const,
-        args: [i],
+        args: [BigInt(i)],
       })),
     [klerosCorAddress]
   );
@@ -360,9 +356,17 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       console.log(`[CourtManager] Court ${i} parsed data:`, data);
       const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled = false] = data;
 
-      // Skip courts that don't exist (parent = 0 for uninitialized)
-      if (i !== 0 && parent === 0n) {
-        console.log(`[CourtManager] Skipping court ${i} - parent is 0`);
+      // Skip uninitialized courts: all fields are zero (except court 0 which is the forking court)
+      // Note: Court 1 (General Court) legitimately has parent=0 (forking court), so we can't use parent===0 as a skip condition
+      if (
+        i !== 0 &&
+        parent === 0n &&
+        minStake === 0n &&
+        alpha === 0n &&
+        feeForJuror === 0n &&
+        jurorsForCourtJump === 0n
+      ) {
+        console.log(`[CourtManager] Skipping court ${i} - all fields are zero (uninitialized)`);
         continue;
       }
 
@@ -374,9 +378,7 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
 
       const policyResult = policiesData?.[i];
       const policyUri =
-        policyResult?.status === "success" && policyResult.result
-          ? (policyResult.result as string)
-          : "";
+        policyResult?.status === "success" && policyResult.result ? (policyResult.result as string) : "";
 
       map.set(i, {
         id: i,
@@ -516,33 +518,33 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       courts,
       selectedCourtId,
       selectCourt,
-      
+
       // Loading/error states
       isLoading,
       error,
-      
+
       // Chain/deployment info
       deployment,
       expectedChainId,
       isCorrectChain,
-      
+
       // Owner info
       isOwner,
       ownerAddress: klerosOwner as Address | undefined,
       isOwnerMultisig,
-      
+
       // Editing
       pendingChanges,
       addPendingChange,
       clearPendingChanges,
-      
+
       // Validation
       validationErrors,
-      
+
       // Actions
       buildChangeCourtTx,
       exportSafeBatch,
-      
+
       // Contract addresses (for display/debugging)
       klerosCorAddress,
       policyRegistryAddress,

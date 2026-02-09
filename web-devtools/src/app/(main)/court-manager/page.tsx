@@ -47,14 +47,11 @@ const CourtManager: React.FC = () => {
     <CourtManagerProvider>
       <Container>
         <Header />
-        {!isConnected ? (
-          <StyledConnectWallet />
-        ) : (
-          <MainContent>
-            <CourtTree />
-            <CourtDetails />
-          </MainContent>
-        )}
+        {!isConnected && <StyledConnectWallet />}
+        <MainContent>
+          <CourtTree />
+          <CourtDetails />
+        </MainContent>
       </Container>
     </CourtManagerProvider>
   );
