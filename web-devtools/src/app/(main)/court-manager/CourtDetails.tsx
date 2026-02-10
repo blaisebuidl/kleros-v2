@@ -1,10 +1,14 @@
 "use client";
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import styled from "styled-components";
-import { formatEther } from "viem";
+import { formatEther, parseEther } from "viem";
+import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
-import { useCourtManager, validateCourtParams, type ValidationError } from "./CourtManagerContext";
-import LabeledInput from "components/LabeledInput";
+import { useCourtManager, validateCourtParams, type CourtParams, type CourtTimePeriods } from "./CourtManagerContext";
+import { klerosCoreCourtsAbi } from "./contracts";
+import { generateKIP, copyKIPToClipboard, type ParameterChangeKIP } from "./kipGenerator";
+
+// ─── Styled Components ───
 
 const Container = styled.div`
   display: flex;
@@ -77,6 +81,23 @@ const Input = styled.input`
   }
 `;
 
+const TextArea = styled.textarea`
+  padding: 8px 12px;
+  border: 1px solid ${({ theme }) => theme.klerosUIComponentsStroke};
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: monospace;
+  color: ${({ theme }) => theme.klerosUIComponentsPrimaryText};
+  background-color: ${({ theme }) => theme.klerosUIComponentsWhiteBackground};
+  resize: vertical;
+  min-height: 120px;
+
+  &:focus {
+    outline: none;
+    border-color: ${({ theme }) => theme.klerosUIComponentsSecondaryPurple};
+  }
+`;
+
 const Checkbox = styled.input`
   width: 16px;
   height: 16px;
@@ -105,7 +126,25 @@ const WarningBanner = styled.div`
   font-size: 14px;
 `;
 
-const Button = styled.button<{ $variant?: "primary" | "secondary" }>`
+const SuccessBanner = styled.div`
+  padding: 12px;
+  background-color: #d1fae5;
+  border: 1px solid #6ee7b7;
+  border-radius: 4px;
+  color: #059669;
+  font-size: 14px;
+`;
+
+const InfoBanner = styled.div`
+  padding: 12px;
+  background-color: #ede9fe;
+  border: 1px solid #c4b5fd;
+  border-radius: 4px;
+  color: #7c3aed;
+  font-size: 14px;
+`;
+
+const Button = styled.button<{ $variant?: "primary" | "secondary" | "danger" }>`
   padding: 12px 24px;
   border-radius: 4px;
   font-size: 14px;
@@ -114,9 +153,15 @@ const Button = styled.button<{ $variant?: "primary" | "secondary" }>`
   transition: all 0.2s ease;
 
   background-color: ${({ $variant, theme }) =>
-    $variant === "primary" ? theme.klerosUIComponentsSecondaryPurple : "transparent"};
-  color: ${({ $variant, theme }) => ($variant === "primary" ? "#fff" : theme.klerosUIComponentsSecondaryPurple)};
-  border: 1px solid ${({ theme }) => theme.klerosUIComponentsSecondaryPurple};
+    $variant === "primary"
+      ? theme.klerosUIComponentsSecondaryPurple
+      : $variant === "danger"
+        ? "#dc2626"
+        : "transparent"};
+  color: ${({ $variant, theme }) =>
+    $variant === "primary" || $variant === "danger" ? "#fff" : theme.klerosUIComponentsSecondaryPurple};
+  border: 1px solid
+    ${({ $variant, theme }) => ($variant === "danger" ? "#dc2626" : theme.klerosUIComponentsSecondaryPurple)};
 
   &:hover:not(:disabled) {
     opacity: 0.8;
@@ -128,10 +173,16 @@ const Button = styled.button<{ $variant?: "primary" | "secondary" }>`
   }
 `;
 
+const SmallButton = styled(Button)`
+  padding: 6px 12px;
+  font-size: 12px;
+`;
+
 const ButtonGroup = styled.div`
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 `;
 
 const NoSelection = styled.div`
@@ -152,7 +203,28 @@ const PolicyLink = styled.a`
   }
 `;
 
-// Helper to format seconds as human-readable duration
+const TxHash = styled.a`
+  font-family: monospace;
+  font-size: 12px;
+  color: ${({ theme }) => theme.klerosUIComponentsSecondaryPurple};
+  word-break: break-all;
+`;
+
+const PreviewBlock = styled.pre`
+  padding: 12px;
+  background-color: ${({ theme }) => theme.klerosUIComponentsLightBackground};
+  border: 1px solid ${({ theme }) => theme.klerosUIComponentsStroke};
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  overflow-x: auto;
+  max-height: 300px;
+  white-space: pre-wrap;
+  word-break: break-word;
+`;
+
+// ─── Helpers ───
+
 const formatDuration = (seconds: bigint): string => {
   const s = Number(seconds);
   if (s < 60) return `${s}s`;
@@ -161,10 +233,179 @@ const formatDuration = (seconds: bigint): string => {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 };
 
+const getExplorerTxUrl = (hash: string): string => `https://sepolia.arbiscan.io/tx/${hash}`;
+
+// ─── Policy Editor Sub-component ───
+
+interface PolicyEditorProps {
+  courtId: number;
+  currentPolicy?: { name: string; uri: string };
+  isEditing: boolean;
+}
+
+const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isEditing }) => {
+  const [policyName, setPolicyName] = useState(currentPolicy?.name || "");
+  const [policyContent, setPolicyContent] = useState("");
+  const [fetchedContent, setFetchedContent] = useState<string | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Fetch policy content from IPFS if available
+  useEffect(() => {
+    if (!currentPolicy?.uri) return;
+
+    const uri = currentPolicy.uri;
+    // Only fetch IPFS URIs
+    if (!uri.startsWith("/ipfs/") && !uri.startsWith("ipfs://")) return;
+
+    const ipfsPath = uri.startsWith("ipfs://") ? uri.replace("ipfs://", "/ipfs/") : uri;
+    const gatewayUrl = `https://cdn.kleros.link${ipfsPath}`;
+
+    setIsFetching(true);
+    console.log(`[CourtManager] Fetching policy from ${gatewayUrl}`);
+
+    fetch(gatewayUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((text) => {
+        setFetchedContent(text);
+        setPolicyContent(text);
+        console.log(`[CourtManager] Policy content fetched (${text.length} chars)`);
+      })
+      .catch((err) => {
+        console.error("[CourtManager] Failed to fetch policy:", err);
+        setFetchedContent(null);
+      })
+      .finally(() => setIsFetching(false));
+  }, [currentPolicy?.uri]);
+
+  // Parse policy JSON for preview
+  const parsedPolicy = useMemo(() => {
+    try {
+      return JSON.parse(policyContent || fetchedContent || "{}");
+    } catch {
+      return null;
+    }
+  }, [policyContent, fetchedContent]);
+
+  if (!isEditing) {
+    // Read-only view
+    return (
+      <Section>
+        <SectionTitle>📜 Court Policy</SectionTitle>
+        {currentPolicy ? (
+          <>
+            <FieldGroup>
+              <Field>
+                <FieldLabel>Policy Name</FieldLabel>
+                <FieldValue>{currentPolicy.name}</FieldValue>
+              </Field>
+              <Field>
+                <FieldLabel>Policy URI</FieldLabel>
+                <FieldValue>
+                  <PolicyLink href={currentPolicy.uri} target="_blank" rel="noopener noreferrer">
+                    {currentPolicy.uri.length > 50 ? `${currentPolicy.uri.slice(0, 50)}...` : currentPolicy.uri}
+                  </PolicyLink>
+                </FieldValue>
+              </Field>
+            </FieldGroup>
+            {fetchedContent && (
+              <>
+                <SmallButton $variant="secondary" onClick={() => setShowPreview(!showPreview)}>
+                  {showPreview ? "Hide Policy Content" : "Show Policy Content"}
+                </SmallButton>
+                {showPreview && <PreviewBlock>{fetchedContent}</PreviewBlock>}
+              </>
+            )}
+          </>
+        ) : (
+          <FieldValue>No policy set for this court</FieldValue>
+        )}
+      </Section>
+    );
+  }
+
+  // Edit mode
+  return (
+    <Section>
+      <SectionTitle>📜 Court Policy (Edit)</SectionTitle>
+      <InfoBanner>
+        ℹ️ Policy upload requires Atlas authentication (coming soon). You can preview and prepare policy content below.
+      </InfoBanner>
+      <FieldGroup>
+        <Field>
+          <FieldLabel>Policy Name</FieldLabel>
+          <Input
+            type="text"
+            value={policyName}
+            onChange={(e) => setPolicyName(e.target.value)}
+            placeholder="e.g., General Court Policy"
+          />
+        </Field>
+        <Field>
+          <FieldLabel>Current URI</FieldLabel>
+          <FieldValue style={{ fontSize: 12, fontFamily: "monospace" }}>{currentPolicy?.uri || "None"}</FieldValue>
+        </Field>
+      </FieldGroup>
+
+      <Field>
+        <FieldLabel>Policy JSON Content</FieldLabel>
+        {isFetching ? (
+          <FieldValue>Loading policy content from IPFS...</FieldValue>
+        ) : (
+          <TextArea
+            value={policyContent}
+            onChange={(e) => setPolicyContent(e.target.value)}
+            placeholder='{"name": "Court Name", "description": "...", "summary": "...", "requiredSkills": "..."}'
+          />
+        )}
+      </Field>
+
+      {policyContent && (
+        <>
+          <SmallButton $variant="secondary" onClick={() => setShowPreview(!showPreview)}>
+            {showPreview ? "Hide Preview" : "Preview Policy"}
+          </SmallButton>
+          {showPreview && (
+            <PreviewBlock>
+              {parsedPolicy
+                ? JSON.stringify(parsedPolicy, null, 2)
+                : "⚠️ Invalid JSON — please check the content above"}
+            </PreviewBlock>
+          )}
+        </>
+      )}
+    </Section>
+  );
+};
+
+// ─── Main Component ───
+
 const CourtDetails: React.FC = () => {
-  const { courts, selectedCourtId, isOwner, validationErrors } = useCourtManager();
+  const {
+    courts,
+    selectedCourtId,
+    isOwner,
+    isOwnerMultisig,
+    validationErrors,
+    buildChangeCourtTx,
+    exportSafeBatch,
+    klerosCorAddress,
+  } = useCourtManager();
+
   const [isEditing, setIsEditing] = useState(false);
   const [editedValues, setEditedValues] = useState<Record<string, string>>({});
+  const [kipCopied, setKipCopied] = useState(false);
+
+  // --- Write contract hook for EOA ---
+  const { writeContract, data: txHash, isPending: isTxPending, error: txError, reset: resetTx } = useWriteContract();
+
+  // --- Wait for tx receipt ---
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
 
   const selectedCourt = selectedCourtId !== null ? courts.get(selectedCourtId) : null;
 
@@ -172,6 +413,156 @@ const CourtDetails: React.FC = () => {
     if (!selectedCourtId) return [];
     return validationErrors.filter((e) => e.courtId === selectedCourtId);
   }, [validationErrors, selectedCourtId]);
+
+  // Build merged params from current + edited values
+  const buildMergedParams = useCallback((): {
+    params: Partial<CourtParams & CourtTimePeriods>;
+    hasChanges: boolean;
+  } => {
+    if (!selectedCourt) return { params: {}, hasChanges: false };
+
+    const merged: Partial<CourtParams & CourtTimePeriods> = {};
+    let hasChanges = false;
+
+    if (editedValues.hiddenVotes !== undefined) {
+      const newVal = editedValues.hiddenVotes === "true";
+      if (newVal !== selectedCourt.params.hiddenVotes) {
+        merged.hiddenVotes = newVal;
+        hasChanges = true;
+      }
+    }
+    if (editedValues.minStake !== undefined) {
+      try {
+        const newVal = parseEther(editedValues.minStake);
+        if (newVal !== selectedCourt.params.minStake) {
+          merged.minStake = newVal;
+          hasChanges = true;
+        }
+      } catch {
+        /* invalid input, skip */
+      }
+    }
+    if (editedValues.feeForJuror !== undefined) {
+      try {
+        const newVal = parseEther(editedValues.feeForJuror);
+        if (newVal !== selectedCourt.params.feeForJuror) {
+          merged.feeForJuror = newVal;
+          hasChanges = true;
+        }
+      } catch {
+        /* invalid input */
+      }
+    }
+    if (editedValues.alpha !== undefined) {
+      const newVal = BigInt(editedValues.alpha || "0");
+      if (newVal !== selectedCourt.params.alpha) {
+        merged.alpha = newVal;
+        hasChanges = true;
+      }
+    }
+    if (editedValues.jurorsForCourtJump !== undefined) {
+      const newVal = BigInt(editedValues.jurorsForCourtJump || "0");
+      if (newVal !== selectedCourt.params.jurorsForCourtJump) {
+        merged.jurorsForCourtJump = newVal;
+        hasChanges = true;
+      }
+    }
+    // Time periods
+    for (const key of ["evidence", "commit", "vote", "appeal"] as const) {
+      if (editedValues[key] !== undefined) {
+        const newVal = BigInt(editedValues[key] || "0");
+        if (newVal !== selectedCourt.timePeriods[key]) {
+          merged[key] = newVal;
+          hasChanges = true;
+        }
+      }
+    }
+
+    return { params: merged, hasChanges };
+  }, [selectedCourt, editedValues]);
+
+  const { hasChanges } = buildMergedParams();
+
+  // Reset tx state when switching courts or cancelling edit
+  useEffect(() => {
+    resetTx();
+  }, [selectedCourtId, isEditing, resetTx]);
+
+  // --- Save Handler (EOA direct tx) ---
+  const handleSave = useCallback(() => {
+    if (!selectedCourt || selectedCourtId === null) return;
+
+    const { params: merged } = buildMergedParams();
+    const court = selectedCourt;
+
+    const hiddenVotes = merged.hiddenVotes ?? court.params.hiddenVotes;
+    const minStake = merged.minStake ?? court.params.minStake;
+    const alpha = merged.alpha ?? court.params.alpha;
+    const feeForJuror = merged.feeForJuror ?? court.params.feeForJuror;
+    const jurorsForCourtJump = merged.jurorsForCourtJump ?? court.params.jurorsForCourtJump;
+    const timesPerPeriod: readonly [bigint, bigint, bigint, bigint] = [
+      merged.evidence ?? court.timePeriods.evidence,
+      merged.commit ?? court.timePeriods.commit,
+      merged.vote ?? court.timePeriods.vote,
+      merged.appeal ?? court.timePeriods.appeal,
+    ] as const;
+
+    console.log("[CourtManager] Sending changeCourtParameters tx:", {
+      courtId: selectedCourtId,
+      hiddenVotes,
+      minStake: minStake.toString(),
+      alpha: alpha.toString(),
+      feeForJuror: feeForJuror.toString(),
+      jurorsForCourtJump: jurorsForCourtJump.toString(),
+      timesPerPeriod: timesPerPeriod.map((t) => t.toString()),
+    });
+
+    writeContract({
+      address: klerosCorAddress,
+      abi: klerosCoreCourtsAbi,
+      functionName: "changeCourtParameters",
+      args: [selectedCourtId, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, timesPerPeriod],
+    });
+  }, [selectedCourt, selectedCourtId, buildMergedParams, writeContract, klerosCorAddress]);
+
+  // --- Safe Batch Download Handler ---
+  const handleDownloadSafeBatch = useCallback(() => {
+    if (!selectedCourt || selectedCourtId === null) return;
+
+    const { params: merged } = buildMergedParams();
+    const tx = buildChangeCourtTx(selectedCourtId, merged);
+    if (!tx) return;
+
+    const courtName = selectedCourt.policy?.name || `Court #${selectedCourtId}`;
+    exportSafeBatch([tx], `Update ${courtName} Parameters`);
+    console.log("[CourtManager] Safe batch JSON downloaded");
+  }, [selectedCourt, selectedCourtId, buildMergedParams, buildChangeCourtTx, exportSafeBatch]);
+
+  // --- KIP Generator Handler ---
+  const handleGenerateKIP = useCallback(async () => {
+    if (!selectedCourt || selectedCourtId === null) return;
+
+    const { params: merged } = buildMergedParams();
+
+    const kipData: ParameterChangeKIP = {
+      type: "parameter-change",
+      author: "[Your Name/Address]",
+      courtId: selectedCourtId,
+      courtName: selectedCourt.policy?.name || `Court #${selectedCourtId}`,
+      currentParams: selectedCourt.params,
+      currentTimePeriods: selectedCourt.timePeriods,
+      proposedParams: merged,
+      proposedTimePeriods: merged,
+      rationale: "",
+    };
+
+    const copied = await copyKIPToClipboard(kipData);
+    if (copied) {
+      setKipCopied(true);
+      setTimeout(() => setKipCopied(false), 3000);
+      console.log("[CourtManager] KIP template copied to clipboard");
+    }
+  }, [selectedCourt, selectedCourtId, buildMergedParams]);
 
   if (!selectedCourt) {
     return (
@@ -182,6 +573,7 @@ const CourtDetails: React.FC = () => {
   }
 
   const { params, timePeriods, policy } = selectedCourt;
+  const hasErrors = courtErrors.filter((e) => e.severity === "error").length > 0;
 
   return (
     <Container>
@@ -214,6 +606,19 @@ const CourtDetails: React.FC = () => {
             </ul>
           </WarningBanner>
         )}
+
+        {/* Tx feedback */}
+        {txHash && (
+          <SuccessBanner>
+            ✅ Transaction submitted!{" "}
+            <TxHash href={getExplorerTxUrl(txHash)} target="_blank" rel="noopener noreferrer">
+              {txHash}
+            </TxHash>
+            {isConfirming && " — Waiting for confirmation..."}
+            {isConfirmed && " — Confirmed!"}
+          </SuccessBanner>
+        )}
+        {txError && <ErrorBanner>❌ Transaction failed: {txError.message.slice(0, 200)}</ErrorBanner>}
       </Section>
 
       {/* Basic Info */}
@@ -368,54 +773,60 @@ const CourtDetails: React.FC = () => {
         </FieldGroup>
       </Section>
 
-      {/* Policy */}
-      <Section>
-        <SectionTitle>📜 Court Policy</SectionTitle>
-        {policy ? (
-          <FieldGroup>
-            <Field>
-              <FieldLabel>Policy Name</FieldLabel>
-              <FieldValue>{policy.name}</FieldValue>
-            </Field>
-            <Field>
-              <FieldLabel>Policy URI</FieldLabel>
-              <FieldValue>
-                <PolicyLink href={policy.uri} target="_blank" rel="noopener noreferrer">
-                  {policy.uri.length > 50 ? `${policy.uri.slice(0, 50)}...` : policy.uri}
-                </PolicyLink>
-              </FieldValue>
-            </Field>
-          </FieldGroup>
-        ) : (
-          <FieldValue>No policy set for this court</FieldValue>
-        )}
-      </Section>
+      {/* Policy Section */}
+      <PolicyEditor courtId={selectedCourtId!} currentPolicy={policy} isEditing={isEditing} />
 
       {/* Action Buttons */}
-      {isOwner && (
-        <ButtonGroup>
-          {isEditing ? (
-            <>
-              <Button
-                $variant="secondary"
-                onClick={() => {
-                  setIsEditing(false);
-                  setEditedValues({});
-                }}
-              >
-                Cancel
+      <ButtonGroup>
+        {/* KIP Generator — always visible for non-owners, visible in edit mode for owners */}
+        {(!isOwner || isEditing) && (
+          <Button
+            $variant="secondary"
+            onClick={handleGenerateKIP}
+            disabled={isEditing && !hasChanges}
+            title={kipCopied ? "Copied!" : "Generate a KIP template and copy to clipboard"}
+          >
+            {kipCopied ? "✅ KIP Copied!" : "📋 Generate KIP Template"}
+          </Button>
+        )}
+
+        {isOwner && (
+          <>
+            {isEditing ? (
+              <>
+                <Button
+                  $variant="secondary"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setEditedValues({});
+                    resetTx();
+                  }}
+                >
+                  Cancel
+                </Button>
+
+                {isOwnerMultisig ? (
+                  <Button $variant="primary" onClick={handleDownloadSafeBatch} disabled={!hasChanges || hasErrors}>
+                    📥 Download Safe Batch
+                  </Button>
+                ) : (
+                  <Button
+                    $variant="primary"
+                    onClick={handleSave}
+                    disabled={!hasChanges || hasErrors || isTxPending || isConfirming}
+                  >
+                    {isTxPending ? "Confirm in Wallet..." : isConfirming ? "Confirming..." : "Save Changes"}
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Button $variant="primary" onClick={() => setIsEditing(true)}>
+                Edit Parameters
               </Button>
-              <Button $variant="primary" disabled={courtErrors.filter((e) => e.severity === "error").length > 0}>
-                Save Changes
-              </Button>
-            </>
-          ) : (
-            <Button $variant="primary" onClick={() => setIsEditing(true)}>
-              Edit Parameters
-            </Button>
-          )}
-        </ButtonGroup>
-      )}
+            )}
+          </>
+        )}
+      </ButtonGroup>
     </Container>
   );
 };
