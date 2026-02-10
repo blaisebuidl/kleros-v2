@@ -1,6 +1,6 @@
 /**
  * Contract ABIs and addresses for Court Manager
- * 
+ *
  * These are extracted from the deployment files to avoid full wagmi generate.
  * For production, consider using generated hooks from wagmi.config.ts
  */
@@ -11,22 +11,22 @@ import { getDeployment, type Deployment } from "consts/index";
 // --- Addresses by Deployment ---
 
 const KLEROS_CORE_ADDRESSES: Record<Deployment, `0x${string}`> = {
-  mainnet: "0x991d2df165670b9cac3B022f4B68D65b664222ea",   // Arbitrum One
-  testnet: "0xE8442307d36e9bf6aB27F1A009F95CE8E11C3479",   // Arbitrum Sepolia
-  devnet: "0x53451933006f5CbcCdb33fcDd6AC9A00b641C474",    // Arbitrum Sepolia Devnet (KlerosCoreUniversity)
+  mainnet: "0x991d2df165670b9cac3B022f4B68D65b664222ea", // Arbitrum One
+  testnet: "0xE8442307d36e9bf6aB27F1A009F95CE8E11C3479", // Arbitrum Sepolia
+  devnet: "0x53451933006f5CbcCdb33fcDd6AC9A00b641C474", // Arbitrum Sepolia Devnet (KlerosCoreUniversity)
 };
 
 const POLICY_REGISTRY_ADDRESSES: Record<Deployment, `0x${string}`> = {
-  mainnet: "0x553dcbF6aB3aE06a1064b5200Df1B5A9fB403d3c",   // Arbitrum One
-  testnet: "0x2668c46A14af8997417138B064ca1bEB70769585",   // Arbitrum Sepolia
-  devnet: "0x6445F57d2Bd2AD5BC23bC899731f7D5184d6e893",    // Arbitrum Sepolia Devnet
+  mainnet: "0x553dcbF6aB3aE06a1064b5200Df1B5A9fB403d3c", // Arbitrum One
+  testnet: "0x2668c46A14af8997417138B064ca1bEB70769585", // Arbitrum Sepolia
+  devnet: "0x6445F57d2Bd2AD5BC23bC899731f7D5184d6e893", // Arbitrum Sepolia Devnet
 };
 
 // Chain IDs by deployment
 export const CHAIN_ID_BY_DEPLOYMENT: Record<Deployment, number> = {
-  mainnet: arbitrum.id,        // 42161
+  mainnet: arbitrum.id, // 42161
   testnet: arbitrumSepolia.id, // 421614
-  devnet: arbitrumSepolia.id,  // 421614 (same chain, different deployment)
+  devnet: arbitrumSepolia.id, // 421614 (same chain, different deployment)
 };
 
 // Get addresses for current deployment
@@ -63,10 +63,10 @@ export const governorAbi = [
 ] as const;
 
 // KlerosCore ABI for court management
-// Note: KlerosCoreUniversity (devnet) has 6 outputs (no "disabled" field)
-//       KlerosCore (mainnet/testnet) has 7 outputs (includes "disabled")
-// We use the 6-output version and handle "disabled" separately for compatibility
-export const klerosCoreCourtsAbi = [
+// KlerosCoreUniversity (devnet) returns 6 fields (no "disabled")
+// KlerosCore (mainnet/testnet) returns 7 fields (includes "disabled")
+// We use deployment-specific ABIs since viem strictly validates output count
+const klerosCoreCourtsAbi6 = [
   {
     inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     name: "courts",
@@ -81,12 +81,32 @@ export const klerosCoreCourtsAbi = [
     stateMutability: "view",
     type: "function",
   },
+] as const;
+
+const klerosCoreCourtsAbi7 = [
+  {
+    inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    name: "courts",
+    outputs: [
+      { internalType: "uint96", name: "parent", type: "uint96" },
+      { internalType: "bool", name: "hiddenVotes", type: "bool" },
+      { internalType: "uint256", name: "minStake", type: "uint256" },
+      { internalType: "uint256", name: "alpha", type: "uint256" },
+      { internalType: "uint256", name: "feeForJuror", type: "uint256" },
+      { internalType: "uint256", name: "jurorsForCourtJump", type: "uint256" },
+      { internalType: "bool", name: "disabled", type: "bool" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+// Shared ABI entries (same for all deployments)
+const klerosCoreSharedAbi = [
   {
     inputs: [{ internalType: "uint96", name: "_courtID", type: "uint96" }],
     name: "getTimesPerPeriod",
-    outputs: [
-      { internalType: "uint256[4]", name: "timesPerPeriod", type: "uint256[4]" },
-    ],
+    outputs: [{ internalType: "uint256[4]", name: "timesPerPeriod", type: "uint256[4]" }],
     stateMutability: "view",
     type: "function",
   },
@@ -124,6 +144,12 @@ export const klerosCoreCourtsAbi = [
   },
   ...ownerAbi,
 ] as const;
+
+// Select ABI based on deployment: devnet uses KlerosCoreUniversity (6 fields), others use KlerosCore (7 fields)
+export const klerosCoreCourtsAbi =
+  getDeployment() === "devnet"
+    ? ([...klerosCoreCourtsAbi6, ...klerosCoreSharedAbi] as const)
+    : ([...klerosCoreCourtsAbi7, ...klerosCoreSharedAbi] as const);
 
 // PolicyRegistry ABI
 export const policyRegistryAbi = [

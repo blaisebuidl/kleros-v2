@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useMemo } from "react";
 import styled from "styled-components";
-import { formatEther, parseEther } from "viem";
+import { formatEther } from "viem";
 
 import { useCourtManager, validateCourtParams, type ValidationError } from "./CourtManagerContext";
 import LabeledInput from "components/LabeledInput";
@@ -115,8 +115,7 @@ const Button = styled.button<{ $variant?: "primary" | "secondary" }>`
 
   background-color: ${({ $variant, theme }) =>
     $variant === "primary" ? theme.klerosUIComponentsSecondaryPurple : "transparent"};
-  color: ${({ $variant, theme }) =>
-    $variant === "primary" ? "#fff" : theme.klerosUIComponentsSecondaryPurple};
+  color: ${({ $variant, theme }) => ($variant === "primary" ? "#fff" : theme.klerosUIComponentsSecondaryPurple)};
   border: 1px solid ${({ theme }) => theme.klerosUIComponentsSecondaryPurple};
 
   &:hover:not(:disabled) {
@@ -230,11 +229,7 @@ const CourtDetails: React.FC = () => {
           </Field>
           <Field>
             <FieldLabel>Parent Court</FieldLabel>
-            <FieldValue>
-              {params.parent === selectedCourtId
-                ? "Self (Root Court)"
-                : `#${params.parent}`}
-            </FieldValue>
+            <FieldValue>{params.parent === selectedCourtId ? "Self (Root Court)" : `#${params.parent}`}</FieldValue>
           </Field>
         </FieldGroup>
       </Section>
@@ -276,7 +271,9 @@ const CourtDetails: React.FC = () => {
                 onChange={(e) => setEditedValues((v) => ({ ...v, alpha: e.target.value }))}
               />
             ) : (
-              <FieldValue>{params.alpha.toString()} ({Number(params.alpha) / 100}%)</FieldValue>
+              <FieldValue>
+                {params.alpha.toString()} ({Number(params.alpha) / 100}%)
+              </FieldValue>
             )}
           </Field>
           <Field>
@@ -362,7 +359,9 @@ const CourtDetails: React.FC = () => {
             {isEditing ? (
               <Checkbox
                 type="checkbox"
-                checked={editedValues.hiddenVotes === "true" || (editedValues.hiddenVotes === undefined && params.hiddenVotes)}
+                checked={
+                  editedValues.hiddenVotes === "true" || (editedValues.hiddenVotes === undefined && params.hiddenVotes)
+                }
                 onChange={(e) => setEditedValues((v) => ({ ...v, hiddenVotes: e.target.checked.toString() }))}
               />
             ) : (
@@ -400,7 +399,13 @@ const CourtDetails: React.FC = () => {
         <ButtonGroup>
           {isEditing ? (
             <>
-              <Button $variant="secondary" onClick={() => { setIsEditing(false); setEditedValues({}); }}>
+              <Button
+                $variant="secondary"
+                onClick={() => {
+                  setIsEditing(false);
+                  setEditedValues({});
+                }}
+              >
                 Cancel
               </Button>
               <Button $variant="primary" disabled={courtErrors.filter((e) => e.severity === "error").length > 0}>
