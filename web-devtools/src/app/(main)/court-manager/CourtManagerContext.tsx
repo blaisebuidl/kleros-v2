@@ -28,7 +28,6 @@ export interface CourtParams {
   alpha: bigint;
   feeForJuror: bigint;
   jurorsForCourtJump: bigint;
-  disabled: boolean;
 }
 
 export interface CourtTimePeriods {
@@ -351,10 +350,9 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
       console.log(`[CourtManager] Court ${i}:`, { status: result.status, result: result.result });
       if (result.status !== "success" || !result.result) continue;
 
-      // KlerosCoreUniversity returns 6 fields (no disabled), KlerosCore returns 7
-      const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint, boolean?];
+      const data = result.result as unknown as [bigint, boolean, bigint, bigint, bigint, bigint];
       console.log(`[CourtManager] Court ${i} parsed data:`, data);
-      const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump, disabled = false] = data;
+      const [parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump] = data;
 
       // Skip uninitialized courts: all fields are zero (except court 0 which is the forking court)
       // Note: Court 1 (General Court) legitimately has parent=0 (forking court), so we can't use parent===0 as a skip condition
@@ -389,7 +387,6 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
           alpha,
           feeForJuror,
           jurorsForCourtJump,
-          disabled,
         },
         timePeriods: {
           evidence: times[0],

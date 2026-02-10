@@ -187,10 +187,7 @@ const CourtDetails: React.FC = () => {
     <Container>
       {/* Header */}
       <Section>
-        <SectionTitle>
-          {policy?.name || `Court #${selectedCourtId}`}
-          {params.disabled && " (Disabled)"}
-        </SectionTitle>
+        <SectionTitle>{policy?.name || `Court #${selectedCourtId}`}</SectionTitle>
 
         {courtErrors.filter((e) => e.severity === "error").length > 0 && (
           <ErrorBanner>

@@ -36,10 +36,8 @@ const CourtItem = styled.div<{ $selected: boolean; $level: number }>`
   margin-left: ${({ $level }) => $level * 16}px;
   border-radius: 4px;
   cursor: pointer;
-  background-color: ${({ $selected, theme }) =>
-    $selected ? theme.klerosUIComponentsLightBlue : "transparent"};
-  border: 1px solid ${({ $selected, theme }) =>
-    $selected ? theme.klerosUIComponentsSecondaryPurple : "transparent"};
+  background-color: ${({ $selected, theme }) => ($selected ? theme.klerosUIComponentsLightBlue : "transparent")};
+  border: 1px solid ${({ $selected, theme }) => ($selected ? theme.klerosUIComponentsSecondaryPurple : "transparent")};
   transition: all 0.2s ease;
 
   &:hover {
@@ -86,15 +84,8 @@ const CourtTreeNode: React.FC<CourtTreeNodeProps> = ({ courtId, level }) => {
 
   return (
     <>
-      <CourtItem
-        $selected={selectedCourtId === courtId}
-        $level={level}
-        onClick={() => selectCourt(courtId)}
-      >
-        <CourtName>
-          {court.policy?.name || `Court #${courtId}`}
-          {court.params.disabled && " (disabled)"}
-        </CourtName>
+      <CourtItem $selected={selectedCourtId === courtId} $level={level} onClick={() => selectCourt(courtId)}>
+        <CourtName>{court.policy?.name || `Court #${courtId}`}</CourtName>
         <CourtMeta>
           ID: {courtId} • Min Stake: {formatEther(court.params.minStake)} PNK
         </CourtMeta>
@@ -122,9 +113,7 @@ const CourtTree: React.FC = () => {
     return (
       <Container>
         <Title>🏛️ Court Hierarchy</Title>
-        <EmptyState>
-          No courts found. Make sure you&apos;re connected to the correct network.
-        </EmptyState>
+        <EmptyState>No courts found. Make sure you&apos;re connected to the correct network.</EmptyState>
       </Container>
     );
   }

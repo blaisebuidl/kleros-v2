@@ -63,10 +63,9 @@ export const governorAbi = [
 ] as const;
 
 // KlerosCore ABI for court management
-// KlerosCoreUniversity (devnet) returns 6 fields (no "disabled")
-// KlerosCore (mainnet/testnet) returns 7 fields (includes "disabled")
-// We use deployment-specific ABIs since viem strictly validates output count
-const klerosCoreCourtsAbi6 = [
+// Targets current version (KlerosCoreUniversity on devnet): 6 fields, no "disabled"
+// Legacy testnet/mainnet deployments are outdated and will be redeployed
+export const klerosCoreCourtsAbi = [
   {
     inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     name: "courts",
@@ -81,28 +80,6 @@ const klerosCoreCourtsAbi6 = [
     stateMutability: "view",
     type: "function",
   },
-] as const;
-
-const klerosCoreCourtsAbi7 = [
-  {
-    inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    name: "courts",
-    outputs: [
-      { internalType: "uint96", name: "parent", type: "uint96" },
-      { internalType: "bool", name: "hiddenVotes", type: "bool" },
-      { internalType: "uint256", name: "minStake", type: "uint256" },
-      { internalType: "uint256", name: "alpha", type: "uint256" },
-      { internalType: "uint256", name: "feeForJuror", type: "uint256" },
-      { internalType: "uint256", name: "jurorsForCourtJump", type: "uint256" },
-      { internalType: "bool", name: "disabled", type: "bool" },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
-
-// Shared ABI entries (same for all deployments)
-const klerosCoreSharedAbi = [
   {
     inputs: [{ internalType: "uint96", name: "_courtID", type: "uint96" }],
     name: "getTimesPerPeriod",
@@ -145,12 +122,6 @@ const klerosCoreSharedAbi = [
   ...ownerAbi,
 ] as const;
 
-// Select ABI based on deployment: devnet uses KlerosCoreUniversity (6 fields), others use KlerosCore (7 fields)
-export const klerosCoreCourtsAbi =
-  getDeployment() === "devnet"
-    ? ([...klerosCoreCourtsAbi6, ...klerosCoreSharedAbi] as const)
-    : ([...klerosCoreCourtsAbi7, ...klerosCoreSharedAbi] as const);
-
 // PolicyRegistry ABI
 export const policyRegistryAbi = [
   {
@@ -183,7 +154,6 @@ export interface CourtData {
   alpha: bigint;
   feeForJuror: bigint;
   jurorsForCourtJump: bigint;
-  disabled: boolean;
 }
 
 export type TimesPerPeriod = readonly [bigint, bigint, bigint, bigint];
