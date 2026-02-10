@@ -1,13 +1,14 @@
 "use client";
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import styled from "styled-components";
-import { formatEther, parseEther } from "viem";
+import { formatEther, parseEther, encodeFunctionData } from "viem";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
 import MarkdownRenderer from "../../../components/MarkdownRenderer";
 import { useCourtManager, validateCourtParams, type CourtParams, type CourtTimePeriods } from "./CourtManagerContext";
-import { klerosCoreCourtsAbi } from "./contracts";
+import { klerosCoreCourtsAbi, policyRegistryAbi, createSafeTransaction } from "./contracts";
 import { generateKIP, copyKIPToClipboard, type ParameterChangeKIP } from "./kipGenerator";
+import { useAtlas, Roles } from "./useAtlas";
 
 // ─── Styled Components ───
 
@@ -283,6 +284,19 @@ const PolicyPreviewSection = styled.div`
 `;
 
 const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isEditing }) => {
+  const { isOwner, isOwnerMultisig, exportSafeBatch, policyRegistryAddress } = useCourtManager();
+  const {
+    isAuthenticated,
+    isAuthenticating,
+    isUploading,
+    authError,
+    uploadError,
+    authenticate,
+    uploadJsonToIpfs,
+    clearErrors,
+  } = useAtlas();
+  const { writeContract: writePolicyTx, isPending: isPolicyTxPending } = useWriteContract();
+
   const [policyName, setPolicyName] = useState(currentPolicy?.name || "");
   const [policyPurpose, setPolicyPurpose] = useState("");
   const [policyRules, setPolicyRules] = useState("");
@@ -290,6 +304,7 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
   const [fetchedContent, setFetchedContent] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [uploadedCid, setUploadedCid] = useState<string | null>(null);
 
   // Fetch policy content from IPFS and parse into individual fields
   useEffect(() => {
@@ -343,6 +358,39 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
     }
     return obj;
   }, [policyName, policyPurpose, policyRules, policyRequiredSkills, courtId, currentPolicy?.uri]);
+
+  // --- Upload handler ---
+  const handleUploadPolicy = useCallback(async () => {
+    clearErrors();
+    setUploadedCid(null);
+    const cid = await uploadJsonToIpfs(reconstructedJson, `policy-court-${courtId}.json`, Roles.Policy);
+    if (cid) {
+      setUploadedCid(cid);
+    }
+  }, [clearErrors, uploadJsonToIpfs, reconstructedJson, courtId]);
+
+  // --- On-chain update (EOA) ---
+  const handleSetPolicyOnChain = useCallback(() => {
+    if (!uploadedCid) return;
+    writePolicyTx({
+      address: policyRegistryAddress,
+      abi: policyRegistryAbi,
+      functionName: "setPolicy",
+      args: [BigInt(courtId), policyName, uploadedCid],
+    });
+  }, [uploadedCid, writePolicyTx, policyRegistryAddress, courtId, policyName]);
+
+  // --- On-chain update (Safe batch download) ---
+  const handleSetPolicySafeBatch = useCallback(() => {
+    if (!uploadedCid) return;
+    const data = encodeFunctionData({
+      abi: policyRegistryAbi,
+      functionName: "setPolicy",
+      args: [BigInt(courtId), policyName, uploadedCid],
+    });
+    const tx = createSafeTransaction({ to: policyRegistryAddress, data });
+    exportSafeBatch([tx], `Update ${policyName || `Court #${courtId}`} Policy`);
+  }, [uploadedCid, policyRegistryAddress, courtId, policyName, exportSafeBatch]);
 
   if (!isEditing) {
     // Read-only view
@@ -400,9 +448,16 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
   return (
     <Section>
       <SectionTitle>📜 Court Policy (Edit)</SectionTitle>
-      <InfoBanner>
-        ℹ️ Policy upload requires Atlas authentication (coming soon). You can preview and prepare policy content below.
-      </InfoBanner>
+      {isAuthenticated ? (
+        <SuccessBanner>✅ Authenticated with Atlas — ready to upload policies.</SuccessBanner>
+      ) : (
+        <InfoBanner>
+          ℹ️ Sign in with your wallet to upload policies to IPFS.{" "}
+          <SmallButton $variant="secondary" onClick={authenticate} disabled={isAuthenticating}>
+            {isAuthenticating ? "Signing..." : "Sign In with Ethereum"}
+          </SmallButton>
+        </InfoBanner>
+      )}
 
       {isFetching ? (
         <FieldValue>Loading policy content from IPFS...</FieldValue>
@@ -482,6 +537,38 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
           <PreviewBlock>{JSON.stringify(reconstructedJson, null, 2)}</PreviewBlock>
         </PolicyPreviewSection>
       )}
+
+      {/* Upload to IPFS */}
+      <ButtonGroup>
+        <Button $variant="primary" onClick={handleUploadPolicy} disabled={isUploading || !policyName}>
+          {isUploading ? "Uploading..." : "📤 Upload Policy to IPFS"}
+        </Button>
+      </ButtonGroup>
+
+      {/* Upload result */}
+      {uploadedCid && (
+        <SuccessBanner>
+          ✅ Uploaded! IPFS path: <code>{uploadedCid}</code>
+        </SuccessBanner>
+      )}
+
+      {/* On-chain update buttons (owner only) */}
+      {uploadedCid && isOwner && (
+        <ButtonGroup>
+          {isOwnerMultisig ? (
+            <Button $variant="secondary" onClick={handleSetPolicySafeBatch}>
+              📥 Download Safe Batch (setPolicy)
+            </Button>
+          ) : (
+            <Button $variant="primary" onClick={handleSetPolicyOnChain} disabled={isPolicyTxPending}>
+              {isPolicyTxPending ? "Confirm in Wallet..." : "📝 Update Policy On-Chain"}
+            </Button>
+          )}
+        </ButtonGroup>
+      )}
+
+      {/* Errors */}
+      {(authError || uploadError) && <ErrorBanner>❌ {authError || uploadError}</ErrorBanner>}
     </Section>
   );
 };
