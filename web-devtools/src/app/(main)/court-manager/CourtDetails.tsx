@@ -244,19 +244,53 @@ interface PolicyEditorProps {
   isEditing: boolean;
 }
 
+const PolicyTextarea = styled(TextArea)`
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+`;
+
+const PolicyPreviewSection = styled.div`
+  padding: 12px;
+  background-color: ${({ theme }) => theme.klerosUIComponentsLightBackground};
+  border: 1px solid ${({ theme }) => theme.klerosUIComponentsStroke};
+  border-radius: 4px;
+
+  h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: ${({ theme }) => theme.klerosUIComponentsSecondaryText};
+    text-transform: uppercase;
+    margin: 0 0 4px 0;
+  }
+
+  p {
+    font-size: 14px;
+    color: ${({ theme }) => theme.klerosUIComponentsPrimaryText};
+    margin: 0 0 16px 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+`;
+
 const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isEditing }) => {
   const [policyName, setPolicyName] = useState(currentPolicy?.name || "");
-  const [policyContent, setPolicyContent] = useState("");
+  const [policyPurpose, setPolicyPurpose] = useState("");
+  const [policyRules, setPolicyRules] = useState("");
+  const [policyRequiredSkills, setPolicyRequiredSkills] = useState("");
   const [fetchedContent, setFetchedContent] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Fetch policy content from IPFS if available
+  // Fetch policy content from IPFS and parse into individual fields
   useEffect(() => {
     if (!currentPolicy?.uri) return;
 
     const uri = currentPolicy.uri;
-    // Only fetch IPFS URIs
     if (!uri.startsWith("/ipfs/") && !uri.startsWith("ipfs://")) return;
 
     const ipfsPath = uri.startsWith("ipfs://") ? uri.replace("ipfs://", "/ipfs/") : uri;
@@ -272,7 +306,15 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
       })
       .then((text) => {
         setFetchedContent(text);
-        setPolicyContent(text);
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.name) setPolicyName(parsed.name);
+          if (parsed.purpose) setPolicyPurpose(parsed.purpose);
+          if (parsed.rules) setPolicyRules(parsed.rules);
+          if (parsed.requiredSkills) setPolicyRequiredSkills(parsed.requiredSkills);
+        } catch {
+          console.warn("[CourtManager] Policy content is not valid JSON, fields left empty");
+        }
         console.log(`[CourtManager] Policy content fetched (${text.length} chars)`);
       })
       .catch((err) => {
@@ -282,14 +324,20 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
       .finally(() => setIsFetching(false));
   }, [currentPolicy?.uri]);
 
-  // Parse policy JSON for preview
-  const parsedPolicy = useMemo(() => {
-    try {
-      return JSON.parse(policyContent || fetchedContent || "{}");
-    } catch {
-      return null;
+  // Reconstruct JSON from individual fields
+  const reconstructedJson = useMemo(() => {
+    const obj: Record<string, unknown> = {
+      name: policyName,
+      purpose: policyPurpose,
+      rules: policyRules,
+      court: courtId,
+      uri: currentPolicy?.uri || "",
+    };
+    if (policyRequiredSkills.trim()) {
+      obj.requiredSkills = policyRequiredSkills;
     }
-  }, [policyContent, fetchedContent]);
+    return obj;
+  }, [policyName, policyPurpose, policyRules, policyRequiredSkills, courtId, currentPolicy?.uri]);
 
   if (!isEditing) {
     // Read-only view
@@ -317,7 +365,22 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
                 <SmallButton $variant="secondary" onClick={() => setShowPreview(!showPreview)}>
                   {showPreview ? "Hide Policy Content" : "Show Policy Content"}
                 </SmallButton>
-                {showPreview && <PreviewBlock>{fetchedContent}</PreviewBlock>}
+                {showPreview && (
+                  <PolicyPreviewSection>
+                    <h4>Name</h4>
+                    <p>{policyName || "—"}</p>
+                    <h4>Purpose</h4>
+                    <p>{policyPurpose || "—"}</p>
+                    <h4>Rules</h4>
+                    <p>{policyRules || "—"}</p>
+                    {policyRequiredSkills && (
+                      <>
+                        <h4>Required Skills</h4>
+                        <p>{policyRequiredSkills}</p>
+                      </>
+                    )}
+                  </PolicyPreviewSection>
+                )}
               </>
             )}
           </>
@@ -335,48 +398,84 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
       <InfoBanner>
         ℹ️ Policy upload requires Atlas authentication (coming soon). You can preview and prepare policy content below.
       </InfoBanner>
-      <FieldGroup>
-        <Field>
-          <FieldLabel>Policy Name</FieldLabel>
-          <Input
-            type="text"
-            value={policyName}
-            onChange={(e) => setPolicyName(e.target.value)}
-            placeholder="e.g., General Court Policy"
-          />
-        </Field>
-        <Field>
-          <FieldLabel>Current URI</FieldLabel>
-          <FieldValue style={{ fontSize: 12, fontFamily: "monospace" }}>{currentPolicy?.uri || "None"}</FieldValue>
-        </Field>
-      </FieldGroup>
 
-      <Field>
-        <FieldLabel>Policy JSON Content</FieldLabel>
-        {isFetching ? (
-          <FieldValue>Loading policy content from IPFS...</FieldValue>
-        ) : (
-          <TextArea
-            value={policyContent}
-            onChange={(e) => setPolicyContent(e.target.value)}
-            placeholder='{"name": "Court Name", "description": "...", "summary": "...", "requiredSkills": "..."}'
-          />
-        )}
-      </Field>
-
-      {policyContent && (
+      {isFetching ? (
+        <FieldValue>Loading policy content from IPFS...</FieldValue>
+      ) : (
         <>
-          <SmallButton $variant="secondary" onClick={() => setShowPreview(!showPreview)}>
-            {showPreview ? "Hide Preview" : "Preview Policy"}
-          </SmallButton>
-          {showPreview && (
-            <PreviewBlock>
-              {parsedPolicy
-                ? JSON.stringify(parsedPolicy, null, 2)
-                : "⚠️ Invalid JSON — please check the content above"}
-            </PreviewBlock>
-          )}
+          <FieldGroup>
+            <Field>
+              <FieldLabel>Policy Name</FieldLabel>
+              <Input
+                type="text"
+                value={policyName}
+                onChange={(e) => setPolicyName(e.target.value)}
+                placeholder="e.g., General Court Policy"
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Court ID</FieldLabel>
+              <FieldValue>{courtId}</FieldValue>
+            </Field>
+          </FieldGroup>
+
+          <Field>
+            <FieldLabel>Purpose</FieldLabel>
+            <PolicyTextarea
+              rows={4}
+              value={policyPurpose}
+              onChange={(e) => setPolicyPurpose(e.target.value)}
+              placeholder="Describe the court's purpose (supports markdown)"
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Rules</FieldLabel>
+            <PolicyTextarea
+              rows={6}
+              value={policyRules}
+              onChange={(e) => setPolicyRules(e.target.value)}
+              placeholder="Rules and guidelines for jurors (supports markdown)"
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Required Skills</FieldLabel>
+            <PolicyTextarea
+              rows={3}
+              value={policyRequiredSkills}
+              onChange={(e) => setPolicyRequiredSkills(e.target.value)}
+              placeholder="Optional"
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Current URI</FieldLabel>
+            <FieldValue style={{ fontSize: 12, fontFamily: "monospace" }}>{currentPolicy?.uri || "None"}</FieldValue>
+          </Field>
         </>
+      )}
+
+      <SmallButton $variant="secondary" onClick={() => setShowPreview(!showPreview)}>
+        {showPreview ? "Hide Preview" : "Preview Policy"}
+      </SmallButton>
+      {showPreview && (
+        <PolicyPreviewSection>
+          <h4>Name</h4>
+          <p>{policyName || "—"}</p>
+          <h4>Purpose</h4>
+          <p>{policyPurpose || "—"}</p>
+          <h4>Rules</h4>
+          <p>{policyRules || "—"}</p>
+          {policyRequiredSkills.trim() && (
+            <>
+              <h4>Required Skills</h4>
+              <p>{policyRequiredSkills}</p>
+            </>
+          )}
+          <h4>JSON Output</h4>
+          <PreviewBlock>{JSON.stringify(reconstructedJson, null, 2)}</PreviewBlock>
+        </PolicyPreviewSection>
       )}
     </Section>
   );
