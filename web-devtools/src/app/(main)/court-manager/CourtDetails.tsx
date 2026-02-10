@@ -262,7 +262,11 @@ const PolicyPreviewSection = styled.div`
     font-weight: 600;
     color: ${({ theme }) => theme.klerosUIComponentsSecondaryText};
     text-transform: uppercase;
-    margin: 0 0 4px 0;
+    margin: 16px 0 4px 0;
+
+    &:first-child {
+      margin-top: 0;
+    }
   }
 
   p {
