@@ -338,7 +338,7 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
     });
   }, [courtsData, courtsLoading, courtsError]);
 
-  const courts = useMemo(() => {
+  const courtsBase = useMemo(() => {
     const map = new Map<number, CourtNode>();
     if (!courtsData) return map;
 
@@ -412,6 +412,63 @@ export const CourtManagerProvider: React.FC<CourtManagerProviderProps> = ({ chil
     console.log("[CourtManager] Final courts map size:", map.size, "courts:", Array.from(map.keys()));
     return map;
   }, [courtsData, timesData, policiesData]);
+
+  // --- Courts state (enriched with policy names from IPFS) ---
+
+  const [courts, setCourts] = useState<Map<number, CourtNode>>(new Map());
+
+  // Seed courts from base map
+  useEffect(() => {
+    setCourts(courtsBase);
+  }, [courtsBase]);
+
+  // Fetch policy names from IPFS
+  useEffect(() => {
+    if (courtsBase.size === 0) return;
+
+    const fetchPolicyNames = async () => {
+      const updates: Array<{ id: number; name: string }> = [];
+
+      await Promise.allSettled(
+        Array.from(courtsBase.values())
+          .filter((court) => court.policy?.uri)
+          .map(async (court) => {
+            const uri = court.policy!.uri;
+            if (!uri.startsWith("/ipfs/") && !uri.startsWith("ipfs://")) return;
+
+            const ipfsPath = uri.startsWith("ipfs://") ? uri.replace("ipfs://", "/ipfs/") : uri;
+            const gatewayUrl = `https://cdn.kleros.link${ipfsPath}`;
+
+            try {
+              const res = await fetch(gatewayUrl);
+              if (!res.ok) return;
+              const json = await res.json();
+              if (json?.name) {
+                updates.push({ id: court.id, name: json.name });
+              }
+            } catch {
+              // Silently skip failed fetches
+            }
+          })
+      );
+
+      if (updates.length > 0) {
+        setCourts((prev) => {
+          const next = new Map(prev);
+          for (const { id, name } of updates) {
+            const court = next.get(id);
+            if (court?.policy) {
+              next.set(id, { ...court, policy: { ...court.policy, name } });
+            }
+          }
+          console.log("[CourtManager] Policy names resolved:", updates);
+          return next;
+        });
+      }
+    };
+
+    fetchPolicyNames();
+  }, [courtsBase]);
 
   // --- Computed values ---
 
