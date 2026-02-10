@@ -4,6 +4,7 @@ import styled from "styled-components";
 import { formatEther, parseEther } from "viem";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 
+import MarkdownRenderer from "../../../components/MarkdownRenderer";
 import { useCourtManager, validateCourtParams, type CourtParams, type CourtTimePeriods } from "./CourtManagerContext";
 import { klerosCoreCourtsAbi } from "./contracts";
 import { generateKIP, copyKIPToClipboard, type ParameterChangeKIP } from "./kipGenerator";
@@ -370,13 +371,13 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
                     <h4>Name</h4>
                     <p>{policyName || "—"}</p>
                     <h4>Purpose</h4>
-                    <p>{policyPurpose || "—"}</p>
+                    {policyPurpose ? <MarkdownRenderer content={policyPurpose} /> : <p>—</p>}
                     <h4>Rules</h4>
-                    <p>{policyRules || "—"}</p>
+                    {policyRules ? <MarkdownRenderer content={policyRules} /> : <p>—</p>}
                     {policyRequiredSkills && (
                       <>
                         <h4>Required Skills</h4>
-                        <p>{policyRequiredSkills}</p>
+                        <MarkdownRenderer content={policyRequiredSkills} />
                       </>
                     )}
                   </PolicyPreviewSection>
@@ -464,13 +465,13 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
           <h4>Name</h4>
           <p>{policyName || "—"}</p>
           <h4>Purpose</h4>
-          <p>{policyPurpose || "—"}</p>
+          {policyPurpose ? <MarkdownRenderer content={policyPurpose} /> : <p>—</p>}
           <h4>Rules</h4>
-          <p>{policyRules || "—"}</p>
+          {policyRules ? <MarkdownRenderer content={policyRules} /> : <p>—</p>}
           {policyRequiredSkills.trim() && (
             <>
               <h4>Required Skills</h4>
-              <p>{policyRequiredSkills}</p>
+              <MarkdownRenderer content={policyRequiredSkills} />
             </>
           )}
           <h4>JSON Output</h4>
