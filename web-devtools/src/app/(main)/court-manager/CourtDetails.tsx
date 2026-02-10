@@ -213,6 +213,7 @@ const TxHash = styled.a`
 const PreviewBlock = styled.pre`
   padding: 12px;
   background-color: ${({ theme }) => theme.klerosUIComponentsLightBackground};
+  color: ${({ theme }) => theme.klerosUIComponentsPrimaryText};
   border: 1px solid ${({ theme }) => theme.klerosUIComponentsStroke};
   border-radius: 4px;
   font-size: 12px;
