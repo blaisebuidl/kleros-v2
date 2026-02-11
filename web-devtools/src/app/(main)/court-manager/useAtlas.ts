@@ -238,8 +238,8 @@ export const useAtlas = (): UseAtlasReturn => {
   const uploadJsonToIpfs = useCallback(
     async (data: object, filename: string, role: Roles = Roles.Policy): Promise<string | null> => {
       const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: "application/json" });
-      const file = new File([blob], filename, { type: "application/json" });
+      const blob = new Blob([json], { type: "application/octet-stream" });
+      const file = new File([blob], filename, { type: "application/octet-stream" });
       return uploadToIpfs(file, filename, role);
     },
     [uploadToIpfs]
