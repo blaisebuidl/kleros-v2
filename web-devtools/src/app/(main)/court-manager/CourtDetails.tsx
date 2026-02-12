@@ -285,16 +285,8 @@ const PolicyPreviewSection = styled.div`
 
 const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isEditing }) => {
   const { isOwner, isOwnerMultisig, exportSafeBatch, policyRegistryAddress } = useCourtManager();
-  const {
-    isAuthenticated,
-    isAuthenticating,
-    isUploading,
-    authError,
-    uploadError,
-    authenticate,
-    uploadJsonToIpfs,
-    clearErrors,
-  } = useAtlas();
+  const { isAuthenticated, isAuthenticating, isUploading, authError, uploadError, uploadJsonToIpfs, clearErrors } =
+    useAtlas();
   const { writeContract: writePolicyTx, isPending: isPolicyTxPending } = useWriteContract();
 
   const [policyName, setPolicyName] = useState(currentPolicy?.name || "");
@@ -448,17 +440,6 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
   return (
     <Section>
       <SectionTitle>📜 Court Policy (Edit)</SectionTitle>
-      {isAuthenticated ? (
-        <SuccessBanner>✅ Authenticated with Atlas — ready to upload policies.</SuccessBanner>
-      ) : (
-        <InfoBanner>
-          ℹ️ Sign in with your wallet to upload policies to IPFS.{" "}
-          <SmallButton $variant="secondary" onClick={authenticate} disabled={isAuthenticating}>
-            {isAuthenticating ? "Signing..." : "Sign In with Ethereum"}
-          </SmallButton>
-        </InfoBanner>
-      )}
-
       {isFetching ? (
         <FieldValue>Loading policy content from IPFS...</FieldValue>
       ) : (
@@ -540,8 +521,13 @@ const PolicyEditor: React.FC<PolicyEditorProps> = ({ courtId, currentPolicy, isE
 
       {/* Upload to IPFS */}
       <ButtonGroup>
-        <Button $variant="primary" onClick={handleUploadPolicy} disabled={isUploading || !policyName}>
-          {isUploading ? "Uploading..." : "📤 Upload Policy to IPFS"}
+        {isAuthenticated && <span style={{ fontSize: 12, color: "#059669", alignSelf: "center" }}>🔑 Signed in</span>}
+        <Button
+          $variant="primary"
+          onClick={handleUploadPolicy}
+          disabled={isUploading || isAuthenticating || !policyName}
+        >
+          {isAuthenticating ? "Signing in..." : isUploading ? "Uploading..." : "📤 Upload Policy to IPFS"}
         </Button>
       </ButtonGroup>
 
